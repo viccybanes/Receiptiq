@@ -25,6 +25,7 @@ export default function App() {
   const [exportIds, setExportIds] = useState<Set<string>>(new Set())
   const [preview, setPreview] = useState<{ columns: string[]; rows: Record<string, string>[]; row_count: number } | null>(null)
   const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState('')
   const [dragging, setDragging] = useState(false)
   const [queueOpen, setQueueOpen] = useState(true)
   const input = useRef<HTMLInputElement>(null)
@@ -143,17 +144,19 @@ export default function App() {
   async function previewExport() {
     try {
       await saveBeforeLeave.current?.()
+      setExportError('')
       setPreview(await post('/exports/preview', { receipt_ids: [...exportIds] }))
     } catch (e) { setError((e as Error).message) }
   }
 
   async function exportCsv() {
     setExporting(true)
+    setExportError('')
     try {
       const result = await post<{ id: string }>('/exports', { receipt_ids: [...exportIds] })
       await download('/exports/' + result.id + '/download', 'receiptiq-' + result.id.slice(0, 8) + '.csv')
       setPreview(null)
-    } catch (e) { setError((e as Error).message) }
+    } catch (e) { setExportError((e as Error).message) }
     finally { setExporting(false) }
   }
 
@@ -229,7 +232,7 @@ export default function App() {
                     checked={exportIds.has(receipt.id)} onChange={e => setExportIds(current => {
                       const next = new Set(current); if (e.target.checked) next.add(receipt.id); else next.delete(receipt.id); return next
                     })} /> : <span className="row-index">{String(index + 1).padStart(2, '0')}</span>}
-                  <button className="receipt-select" onClick={() => void chooseReceipt(receipt.id)}>
+                  <button className="receipt-select" data-receipt-id={receipt.id} onClick={() => void chooseReceipt(receipt.id)}>
                     <span className="receipt-name">{data.supplier || receipt.original_name}</span>
                     <span className="receipt-file">{receipt.original_name}</span>
                     <span className={'status status-' + receipt.status}>
@@ -269,6 +272,7 @@ export default function App() {
     {dragging && <div className="drop-overlay"><Upload size={40} /><h2>Drop your receipt images</h2><p>A batch can contain tens of images.</p></div>}
     {preview && <dialog ref={dialog} className="export-dialog" aria-labelledby="export-title" onCancel={() => setPreview(null)}>
       <div className="panel-title"><h2 id="export-title">Check your CSV</h2><button aria-label="Close preview" onClick={() => setPreview(null)}><X size={20} /></button></div>
+      {exportError && <div className="notice error" role="alert">{exportError}</div>}
       <p>{exportIds.size} verified receipts · {preview.row_count} rows · Receipt line items template</p>
       <p className="muted">Receipt-level totals repeat on each item row. Group by receipt ID before summing totals.</p>
       <div className="csv-scroll"><table><thead><tr>{preview.columns.map(c => <th key={c}>{c}</th>)}</tr></thead>

@@ -128,6 +128,8 @@ def validate(data):
             item_totals.append(values["line_total"])
         else:
             issue(prefix + ".line_total", f"Item {i + 1} has no line total.")
+        if not item["quantity"] or not item["unit_price"]:
+            issue(prefix + ".pricing", f"Item {i + 1}: quantity or unit price is missing. Check the original.")
         if len(values) == 3 and abs(values["quantity"] * values["unit_price"] - values["line_total"]) > Decimal("0.01"):
             issue(prefix + ".arithmetic", f"Item {i + 1}: quantity × price differs from line total.")
     if not items:

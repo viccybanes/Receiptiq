@@ -1,6 +1,6 @@
 # ReceiptIQ implementation plan
 
-Status: proposal only; no application code implemented. Four milestones, each producing a usable increment. Initial target: Windows 11 x64, one local workspace per Windows user. Reviewer names support shared-computer handoff; they are labels, not authenticated accounts.
+Status: milestone 1 implemented; milestones 2-4 remain planned. See README.md for operation and VALIDATION.md for executed checks and limits. The schema and folder layout below describe the target architecture; backend/app/db.py owns the implemented milestone 1 schema. Initial target: Windows 11 x64, one local workspace per Windows user. Reviewer names support shared-computer handoff; they are labels, not authenticated accounts.
 
 Primary workload: users select or drag in tens of receipt images at once. Multi-image ingestion and durable batch processing are milestone 1 requirements. Design and test for batches of 20-100 images initially; this is a workload target, not a promised throughput or fixed file-count limit. Default to one receipt per image; photos containing several separate receipts require a later splitting/cropping workflow.
 

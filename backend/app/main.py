@@ -6,6 +6,7 @@ import json
 import os
 import secrets
 import shutil
+import sqlite3
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -70,7 +71,7 @@ def create_app(root=None, *, start_worker=True, engine=None):
     @app.middleware("http")
     async def local_access(request: Request, call_next):
         host = urlsplit("//" + request.headers.get("host", "")).hostname
-        if host not in ("127.0.0.1", "localhost", "testserver"):
+        if host not in ("127.0.0.1", "localhost"):
             return JSONResponse({"detail": "Local host required"}, 403)
         origin = request.headers.get("origin")
         allowed = {f"http://127.0.0.1:{port}" for port in (5173, 8765)} | {
@@ -103,6 +104,14 @@ def create_app(root=None, *, start_worker=True, engine=None):
     async def storage_error(request, exc):
         return JSONResponse({"detail": "Local storage failed. Check disk space and folder permissions, then retry."},
                             status_code=507)
+
+    @app.exception_handler(sqlite3.OperationalError)
+    async def database_error(request, exc):
+        if getattr(exc, "sqlite_errorcode", None) == sqlite3.SQLITE_FULL:
+            return JSONResponse({"detail": "Disk is full. Free space, then save or upload again."}, status_code=507)
+        if getattr(exc, "sqlite_errorcode", None) in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+            return JSONResponse({"detail": "Workspace is busy. Wait a moment, then retry."}, status_code=503)
+        raise exc
 
     @app.get("/api/v1/session")
     def session():
