@@ -13,6 +13,8 @@ if (-not $SkipBackendBuild) {
 if (-not (Test-Path -LiteralPath 'dist\receiptiq\_internal\python311.dll')) {
     throw 'The complete PyInstaller directory bundle is required.'
 }
+& (Join-Path $projectRoot '.venv\Scripts\python.exe') (Join-Path $projectRoot 'src-tauri\prepare_resources.py')
+if ($LASTEXITCODE -ne 0) { throw 'Refreshing packaged frontend assets failed.' }
 # npm keeps the pinned CLI in its normal cache; no global developer-tool installation is required.
 $tauriArguments = @('build', '--bundles', 'nsis', '--ci')
 if ($env:RECEIPTIQ_CERT_THUMBPRINT) {

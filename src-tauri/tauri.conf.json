@@ -3,7 +3,7 @@
   "productName": "ReceiptIQ Desktop",
   "version": "0.4.0",
   "identifier": "local.receiptiq.desktop",
-  "build": {"frontendDist": "shell", "beforeBuildCommand": ".venv\\Scripts\\python.exe src-tauri\\prepare_resources.py"},
+  "build": {"frontendDist": "shell"},
   "app": {
     "windows": [],
     "security": {"csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'"}
