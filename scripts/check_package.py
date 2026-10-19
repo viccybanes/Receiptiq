@@ -135,11 +135,25 @@ def main():
                     row = next(csv.DictReader(io.StringIO(archive.read("receipts.csv").decode("utf-8-sig"))))
                     assert row["Vendor"] == "Packaged expense QA"
                     assert archive.read(row["Receipt photo"]) == (project / "artifacts/samples/001-printed.png").read_bytes()
+            assert api("/system/capabilities")["profiles"]["2b"]["model"] == "qwen3-vl:2b-instruct"
+            template = api("/templates", {"name": "Packaged workplace", "delimiter": ";", "columns": [
+                {"header": "Vendor name", "field": "Vendor"}, {"header": "Paid", "field": "Total"}]})
+            preview = api("/exports/preview", {"receipt_ids": [receipt_id], "template_id": template["id"]})
+            assert preview["columns"] == ["Vendor name", "Paid"]
+            assert preview["rows"][0]["Vendor name"] == "Packaged expense QA"
+            backup = api("/backups", {})
+            request = urllib.request.Request(base + "/api/v1/backups/" + backup["id"] + "/download",
+                                             headers={"Authorization": "Bearer " + token})
+            with urllib.request.urlopen(request, timeout=10) as response:
+                with zipfile.ZipFile(io.BytesIO(response.read())) as archive:
+                    assert json.loads(archive.read("backup.json"))["schema"] == 3
+                    assert archive.read(row["Receipt photo"]) == (project / "artifacts/samples/001-printed.png").read_bytes()
         finally:
             process.terminate()
             process.wait(timeout=20)
     report = {"python_on_child_path": False, "ocr": "passed", "packaged_api": "passed",
               "frontend_assets": asset_count, "native_sqlite": "passed", "expense_csv_zip": "passed",
+              "hardware_profiles": "passed", "custom_templates": "passed", "workspace_backup": "passed",
               "frozen_sources": "match",
               "scope": "Development Windows machine, not a clean VM"}
     (project / "artifacts/package-check.json").write_text(json.dumps(report, indent=2), encoding="utf-8")

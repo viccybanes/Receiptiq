@@ -19,9 +19,10 @@ def main():
     import uvicorn
 
     from .main import create_app
+    from .system import apply_pending_location
 
     print(f"ReceiptIQ: http://127.0.0.1:{arguments.port}", flush=True)
-    uvicorn.run(create_app(), host="127.0.0.1", port=arguments.port, access_log=False)
+    uvicorn.run(create_app(apply_pending_location()), host="127.0.0.1", port=arguments.port, access_log=False)
 
 
 if __name__ == "__main__":

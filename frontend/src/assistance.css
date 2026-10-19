@@ -1,0 +1,58 @@
+.receipt-assistance { padding: 20px 18px; border-top: 1px solid var(--line); background: var(--paper); min-width: 0; font-size: 12px; }
+.assistance-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+.assistance-heading svg { color: var(--green); }
+.assistance-heading h3 { font-size: 13px; font-weight: 600; }
+.assistance-help { color: var(--muted); font-size: 11px; line-height: 1.55; margin: 7px 0 12px; max-width: 72ch; }
+.receipt-assistance button { font-size: 11px; padding: 6px 9px; min-height: 33px; }
+.assistance-vision-controls > label, .assistance-item-wording > label, .assistance-assignment-fields > label:not(.assistance-checkbox) { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.assistance-vision-controls label > span, .assistance-item-wording label > span, .assistance-assignment-fields label > span { font-size: 11px; font-weight: 600; }
+.assistance-vision-controls select, .assistance-item-wording select { width: 100%; font-size: 11px; min-height: 35px; }
+.assistance-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+.assistance-region-note { color: var(--green-deep); margin: 9px 0; font-size: 11px; }
+.assistance-job { padding: 10px 12px; margin: 12px 0; border: 1px solid var(--line); border-radius: 5px; background: var(--wash); font-size: 11px; }
+.assistance-job > div { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.assistance-job strong { font-weight: 600; }
+.assistance-job button { margin-left: auto; }
+.assistance-job p { margin-top: 5px; overflow-wrap: anywhere; }
+.assistance-job-error { color: #8c3026; background: #fdf0ed; border-color: #ebc5bd; }
+.assistance-notice { font-size: 11px; margin-top: 12px; overflow-wrap: anywhere; }
+.assistance-message { padding: 10px 12px; background: var(--green-wash); color: var(--green-deep); border: 1px solid #bed4c6; border-radius: 5px; margin: 12px 0; font-size: 11px; }
+.assistance-candidate, .assistance-examples, .assistance-assignment { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 14px; }
+.receipt-assistance summary { font-size: 12px; font-weight: 600; }
+.assistance-candidate > summary > span { display: block; margin: 5px 0 0 15px; color: var(--muted); font-size: 10px; font-weight: 400; }
+.assistance-candidate > button { margin-top: 13px; }
+.assistance-differences { margin: 13px 0 0; font-size: 11px; }
+.assistance-differences > div { padding: 8px 0; border-bottom: 1px solid var(--line-soft); }
+.assistance-differences dt { font-weight: 600; margin-bottom: 3px; }
+.assistance-differences dd { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 10px; align-items: start; margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.assistance-old { color: var(--muted); }
+.assistance-change-label { color: var(--green-deep); font-size: 10px; padding-top: 1px; }
+.assistance-more-changes { margin: 10px 0; }
+.assistance-more-changes > summary { color: var(--muted); font-size: 11px; }
+.assistance-stale { background: #fff8e8; color: #72500f; border: 1px solid #e5d3a7; padding: 10px 12px; border-radius: 5px; font-size: 11px; margin-top: 12px; }
+.assistance-example { border-top: 1px solid var(--line-soft); margin-top: 17px; padding-top: 13px; }
+.assistance-example-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 5px; }
+.assistance-example-heading strong { font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.assistance-example-heading button { padding-left: 0; padding-right: 0; }
+.assistance-citation { color: var(--muted); font-size: 10px; line-height: 1.6; margin: 3px 0 10px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.assistance-item-wording { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 14px; }
+.assistance-item-wording > button { justify-self: start; }
+.assistance-corrections { margin-top: 13px; }
+.assistance-corrections > summary { color: var(--muted); font-size: 11px; }
+.assistance-corrections ul { list-style: none; padding: 0; margin: 8px 0 0; }
+.assistance-corrections li { display: grid; gap: 3px; padding: 7px 0; border-bottom: 1px solid var(--line-soft); font-size: 11px; overflow-wrap: anywhere; }
+.assistance-corrections li > span { color: var(--muted); font-size: 10px; }
+.assistance-corrections del { color: var(--muted); }
+.assistance-corrections ins { color: var(--green-deep); text-decoration: none; }
+.assistance-assignment > summary > svg { vertical-align: middle; margin: 0 5px 2px 0; }
+.assistance-assignment-fields { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; margin-top: 14px; }
+.assistance-assignment-fields > label:not(.assistance-checkbox) { width: 100%; }
+.assistance-assignment-fields input:not([type=checkbox]) { min-height: 36px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--paper); font-size: 12px; width: 100%; }
+.assistance-checkbox { display: flex; gap: 8px; align-items: flex-start; }
+.assistance-checkbox input { width: 15px; height: 15px; margin: 1px 0 0; accent-color: var(--green); }
+.assistance-checkbox > span { font-weight: 400 !important; }
+@media (max-width: 600px) {
+  .receipt-assistance { padding: 18px; }
+  .assistance-actions > button { flex-grow: 1; }
+  .assistance-differences dd { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 7px; }
+}

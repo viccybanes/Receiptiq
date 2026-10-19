@@ -18,20 +18,24 @@ from fastapi.staticfiles import StaticFiles
 from filelock import FileLock, Timeout
 from starlette.concurrency import run_in_threadpool
 
+from .backups import apply_staged_restore
 from .db import Store, data_directory, now, uid
 from .extraction import allocate_discount, receipt_issues, reconcile
+from .features import install_routes, view_receipt
 from .imaging import inspect_file
 from .models import BatchInput, Edit, ExportInput, Process, Verify, blank_data
 from .ocr import models_ready
 from .service import (
-    TEMPLATE,
-    csv_rows,
     edit_receipt,
+    export_rows,
     export_selection,
     generate_export,
+    require_mutable_receipt,
     require_receipt,
     verify_receipt,
 )
+from .system import ensure_runtime, stop_runtime
+from .templates import list_templates
 from .transfer import MAX_BUNDLE, add_photo, import_expenses
 from .worker import Worker
 
@@ -39,19 +43,30 @@ MAX_UPLOAD = 25 * 1024 * 1024
 
 
 def create_app(root=None, *, start_worker=True, engine=None):
-    root = Path(root) if root else data_directory()
-    token = secrets.token_urlsafe(32)
-    store = Store(root)
+    root = (Path(root) if root else data_directory()).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    apply_staged_restore(root)
+    token = os.environ.get("RECEIPTIQ_SESSION_TOKEN") or secrets.token_urlsafe(32)
+    if len(token) < 32:
+        raise RuntimeError("Desktop session token must contain at least 32 characters.")
+    desktop = os.environ.get("RECEIPTIQ_DESKTOP") == "1"
+    workspace_lock = FileLock(str(root / "workspace.lock"))
+    # Acquire before migrations, under the same sibling lock used by offline restore.
+    with FileLock(str(root.parent / ("." + root.name + ".restore.lock")), timeout=0):
+        try:
+            workspace_lock.acquire(timeout=0)
+        except Timeout as exc:
+            raise RuntimeError("ReceiptIQ is already using this workspace. Close the other instance.") from exc
+        try:
+            store = Store(root)
+        except BaseException:
+            workspace_lock.release()
+            raise
     worker = Worker(store, engine)
     upload_lock = asyncio.Lock()
 
     @asynccontextmanager
     async def lifespan(app):
-        lock = FileLock(str(store.root / "workspace.lock"))
-        try:
-            lock.acquire(timeout=0)
-        except Timeout as exc:
-            raise RuntimeError("ReceiptIQ is already using this workspace. Close the other instance.") from exc
         try:
             # Incomplete transfers never become accepted receipts.
             for temporary in (store.root / "tmp").glob("*.upload"):
@@ -59,13 +74,21 @@ def create_app(root=None, *, start_worker=True, engine=None):
             store.execute("UPDATE batch_files SET state='pending',error='Transfer interrupted. Reselect this file.' "
                           "WHERE state='uploading'")
             if start_worker:
+                profile_path = store.root / "setup-profile.json"
+                if profile_path.exists():
+                    try:
+                        if json.loads(profile_path.read_text(encoding="utf-8")).get("model"):
+                            ensure_runtime(store.root)
+                    except (ValueError, RuntimeError, OSError):
+                        app.state.vision_notice = "Local vision is unavailable. Retry setup; OCR and manual entry remain available."
                 worker.start()
             yield
         finally:
             worker.close()
-            lock.release()
+            stop_runtime(store.root)
+            workspace_lock.release()
 
-    app = FastAPI(title="ReceiptIQ", version="0.1.0", lifespan=lifespan, docs_url=None, redoc_url=None,
+    app = FastAPI(title="ReceiptIQ", version="0.4.0", lifespan=lifespan, docs_url=None, redoc_url=None,
                   openapi_url=None)
     app.state.store, app.state.worker = store, worker
 
@@ -81,7 +104,8 @@ def create_app(root=None, *, start_worker=True, engine=None):
         allowed.add(str(request.base_url).rstrip("/"))
         if request.headers.get("sec-fetch-site") == "cross-site" or (origin and origin not in allowed):
             return JSONResponse({"detail": "Origin not allowed"}, 403)
-        if request.url.path.startswith("/api/v1") and request.url.path not in ("/api/v1/session", "/api/v1/health"):
+        if request.url.path.startswith("/api/v1") and (
+                desktop or request.url.path not in ("/api/v1/session", "/api/v1/health")):
             supplied = request.headers.get("authorization", "")
             if not secrets.compare_digest(supplied, "Bearer " + token):
                 return JSONResponse({"detail": "Local session required. Reload ReceiptIQ."}, 401)
@@ -93,6 +117,8 @@ def create_app(root=None, *, start_worker=True, engine=None):
             limit = 2 * 1024 * 1024
             if path == "/api/v1/imports":
                 limit = MAX_BUNDLE + 1024 * 1024
+            elif path == "/api/v1/backups/restore":
+                limit = 2 * 1024**3 + 1024 * 1024
             elif path == "/api/v1/receipts" or path.endswith("/photos"):
                 limit = MAX_UPLOAD + 1024 * 1024
             if int(length) > limit:
@@ -125,7 +151,8 @@ def create_app(root=None, *, start_worker=True, engine=None):
 
     @app.get("/api/v1/health")
     def health():
-        return {"status": "ok", "ocr_models_ready": models_ready(store.root), "version": "0.1.0",
+        return {"status": "ok", "ocr_models_ready": models_ready(store.root), "version": "0.4.0",
+                "vision_notice": getattr(app.state, "vision_notice", ""),
                 "worker_alive": bool(worker.thread and worker.thread.is_alive())}
 
     @app.post("/api/v1/batches", status_code=201)
@@ -239,14 +266,16 @@ def create_app(root=None, *, start_worker=True, engine=None):
             connection.execute("UPDATE jobs SET state='queued',stage='Waiting for retry',error=NULL,progress=0 "
                                "WHERE batch_id=? AND state IN ('failed','cancelled') AND receipt_id IN "
                                "(SELECT id FROM receipts WHERE status IN ('failed','cancelled')) AND id IN "
-                               "(SELECT j.id FROM jobs j WHERE j.id=(SELECT j2.id FROM jobs j2 "
-                               "WHERE j2.receipt_id=j.receipt_id ORDER BY j2.created_at DESC LIMIT 1))", (batch_id,))
+                               "(SELECT j.id FROM jobs j WHERE j.kind IN ('ocr','preview') AND j.id=(SELECT j2.id FROM jobs j2 "
+                               "WHERE j2.receipt_id=j.receipt_id AND j2.kind IN ('ocr','preview') "
+                               "ORDER BY j2.created_at DESC LIMIT 1))", (batch_id,))
             connection.execute("UPDATE receipts SET status='queued',error=NULL WHERE batch_id=? "
                                "AND status IN ('failed','cancelled')", (batch_id,))
         return batch(batch_id)
 
     @app.get("/api/v1/receipts")
-    def receipts(batch_id: str | None = None, status: str | None = None, offset: int = 0, limit: int = 100):
+    def receipts(batch_id: str | None = None, status: str | None = None, assignee: str | None = None,
+                 second_review: bool = False, offset: int = 0, limit: int = 100):
         if offset < 0 or not 1 <= limit <= 500:
             raise HTTPException(422, "Invalid pagination")
         conditions, args = [], []
@@ -254,9 +283,17 @@ def create_app(root=None, *, start_worker=True, engine=None):
             if value:
                 conditions.append(key + "=?")
                 args.append(value)
+        if status != "split":
+            conditions.append("r.status<>'split'")
+        if assignee is not None:
+            conditions.append("r.assignee=?")
+            args.append(assignee)
+        if second_review:
+            conditions.append("r.second_review=1")
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
         return store.read(
-            "SELECT r.id,r.batch_id,r.status,r.revision,r.verified_revision,r.error,r.updated_at,"
+            "SELECT r.id,r.batch_id,r.status,r.revision,r.verified_revision,r.error,r.updated_at,r.assignee,r.second_review,"
+            "(SELECT COUNT(*) FROM documents other WHERE other.sha256=d.sha256 AND other.id<>d.id) AS duplicate_count,"
             "d.original_name,r.data_json,(SELECT stage FROM jobs j WHERE j.receipt_id=r.id "
             "ORDER BY j.created_at DESC LIMIT 1) AS stage FROM receipts r "
             "JOIN documents d ON d.id=r.document_id" + where + " ORDER BY r.created_at LIMIT ? OFFSET ?",
@@ -264,10 +301,7 @@ def create_app(root=None, *, start_worker=True, engine=None):
 
     @app.get("/api/v1/receipts/{receipt_id}")
     def receipt(receipt_id: str):
-        result = require_receipt(store, receipt_id)
-        result["issues"] = receipt_issues(result)
-        result["reconciliation"] = reconcile(result["data"])
-        return result
+        return view_receipt(store, receipt_id)
 
     @app.post("/api/v1/imports", status_code=201)
     async def import_file(file: UploadFile = File(...), photos: list[UploadFile] = File(default=[])):
@@ -282,7 +316,7 @@ def create_app(root=None, *, start_worker=True, engine=None):
     @app.post("/api/v1/receipts/{receipt_id}/photos", status_code=201)
     async def upload_photo(receipt_id: str, file: UploadFile = File(...)):
         try:
-            require_receipt(store, receipt_id)
+            require_mutable_receipt(store, receipt_id)
             async with upload_lock:
                 return await run_in_threadpool(add_photo, store, receipt_id, file.file, file.filename or "Photo")
         except ValueError as exc:
@@ -348,7 +382,7 @@ def create_app(root=None, *, start_worker=True, engine=None):
     def process(receipt_id: str, body: Process):
         with store.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            result = require_receipt(store, receipt_id)
+            result = require_mutable_receipt(store, receipt_id)
             if result["status"] in ("queued", "processing"):
                 raise HTTPException(409, "Receipt already queued")
             if result["original_mime"] == "text/csv" and not result["data"]["receipt_photo_id"]:
@@ -356,6 +390,7 @@ def create_app(root=None, *, start_worker=True, engine=None):
             connection.execute("UPDATE receipts SET status='queued',verified_revision=NULL,rotation=?,error=NULL,"
                                "updated_at=? WHERE id=?", (body.rotation, now(), receipt_id))
             connection.execute("DELETE FROM export_queue WHERE receipt_id=?", (receipt_id,))
+            connection.execute("DELETE FROM retrieval_entries WHERE receipt_id=?", (receipt_id,))
             connection.execute("INSERT INTO jobs(id,receipt_id,batch_id,state,stage,created_at,updated_at) "
                                "VALUES(?,?,?,?,?,?,?)", (uid(), receipt_id, result["batch_id"], "queued",
                                                         "Waiting for OCR", now(), now()))
@@ -380,13 +415,14 @@ def create_app(root=None, *, start_worker=True, engine=None):
                 return result
             connection.execute("UPDATE jobs SET state='cancelled',stage='Cancelled' WHERE id=? "
                                "AND state IN ('queued','processing')", (job_id,))
-            connection.execute("UPDATE receipts SET status='cancelled' WHERE id=? "
-                               "AND status IN ('queued','processing')", (result["receipt_id"],))
+            if result["kind"] in ("ocr", "preview"):
+                connection.execute("UPDATE receipts SET status='cancelled' WHERE id=? "
+                                   "AND status IN ('queued','processing')", (result["receipt_id"],))
         return job(job_id)
 
     @app.get("/api/v1/templates")
     def templates():
-        return [TEMPLATE]
+        return list_templates(store)
 
     @app.get("/api/v1/export-queue")
     def export_queue():
@@ -397,13 +433,20 @@ def create_app(root=None, *, start_worker=True, engine=None):
         with store.connect() as connection:
             connection.execute("BEGIN")
             selected = export_selection(store, body.receipt_ids)
-            rows = csv_rows(selected, store)
-        return {"columns": TEMPLATE["columns"], "rows": rows[:100], "row_count": len(rows),
+            try:
+                template, rows = export_rows(store, selected, body.template_id)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+        return {"columns": [column["header"] for column in template["columns"]], "rows": rows[:100], "row_count": len(rows),
+                "template": template,
                 "receipt_count": len(selected)}
 
     @app.post("/api/v1/exports", status_code=201)
     def export(body: ExportInput):
-        return generate_export(store, body.receipt_ids, body.include_photos)
+        try:
+            return generate_export(store, body.receipt_ids, body.include_photos, body.template_id, body.template_version)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     @app.get("/api/v1/exports")
     def exports():
@@ -438,6 +481,7 @@ def create_app(root=None, *, start_worker=True, engine=None):
         shutil.rmtree(store.root / "pages" / receipt_id, ignore_errors=True)
         return {"deleted": True}
 
+    install_routes(app, store, worker)
     static = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2])) / "frontend" / "dist"
     override = os.environ.get("RECEIPTIQ_FRONTEND_DIR")
     if override:

@@ -11,4 +11,4 @@ $ErrorActionPreference = 'Continue' # Windows PowerShell treats redirected nativ
 $buildExit = $LASTEXITCODE
 $ErrorActionPreference = 'Stop'
 if ($buildExit -ne 0) { throw 'Packaging failed.' }
-Write-Host 'Portable feasibility bundle created in dist\receiptiq. Full installer arrives in milestone 4.'
+Write-Host 'Portable backend created in dist\receiptiq. Run scripts/build_installer.ps1 -SkipBackendBuild for the Windows installer.'

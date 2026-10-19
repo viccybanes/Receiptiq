@@ -6,6 +6,8 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files, copy_metada
 
 root = Path(SPECPATH).parent
 datas = [(str(root / "frontend" / "dist"), "frontend/dist")]
+datas += [(str(root / "packaging" / name), "packaging")
+          for name in ("runtime-manifest.json", "THIRD_PARTY_NOTICES.md")]
 binaries = []
 hidden = ["uvicorn.logging", "uvicorn.loops.auto", "uvicorn.protocols.http.h11_impl",
           "uvicorn.protocols.websockets.auto", "uvicorn.lifespan.on",

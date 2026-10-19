@@ -9,6 +9,8 @@ node_modules/
 frontend/dist/
 build/
 dist/
+src-tauri/target/
+src-tauri/gen/schemas/
 .impeccable/*
 !.impeccable/design.json
 .local/

@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowDownToLine, Check, CheckCheck, ChevronRight, FileImage, FileText, FolderOpen,
-  LoaderCircle, Pause, Plus, ReceiptText, RefreshCw, ShieldCheck, Upload, X } from 'lucide-react'
+  LoaderCircle, Pause, Plus, ReceiptText, RefreshCw, Settings, ShieldCheck, Upload, X } from 'lucide-react'
 import { api, connect, download, post } from './api'
 import Review from './Review'
 import type { Batch, Summary } from './types'
+import WorkspaceSettings from './WorkspaceSettings'
+import type { Template } from './TemplatesEditor'
 
 export const statusNames: Record<string, string> = {
   queued: 'Queued', processing: 'Reading', needs_review: 'Needs review', verified: 'Verified',
-  failed: 'Failed', cancelled: 'Cancelled',
+  failed: 'Failed', cancelled: 'Cancelled', split: 'Split into receipts',
 }
 
 export default function App() {
@@ -19,11 +21,16 @@ export default function App() {
   const [receipts, setReceipts] = useState<Summary[]>([])
   const [selected, setSelected] = useState('')
   const [filter, setFilter] = useState('all')
+  const [assigneeFilter, setAssigneeFilter] = useState('')
+  const [priority, setPriority] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [templates, setTemplates] = useState<Template[]>([])
+  const [templateId, setTemplateId] = useState('default')
   const [error, setError] = useState('')
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState({ done: 0, total: 0 })
   const [exportIds, setExportIds] = useState<Set<string>>(new Set())
-  const [preview, setPreview] = useState<{ columns: string[]; rows: Record<string, string>[]; row_count: number } | null>(null)
+  const [preview, setPreview] = useState<{ columns: string[]; rows: Record<string, string>[]; row_count: number; template: Template } | null>(null)
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState('')
   const [dragging, setDragging] = useState(false)
@@ -44,6 +51,14 @@ export default function App() {
   useEffect(() => {
     connect().then(() => setReady(true)).catch((e: Error) => setError(e.message))
   }, [])
+  const refreshTemplates = useCallback(async () => {
+    const rows = await api<Template[]>('/templates')
+    setTemplates(rows)
+    setTemplateId(current => rows.some(row => row.id === current) ? current : 'default')
+  }, [])
+  useEffect(() => {
+    if (ready) void refreshTemplates().catch((e: Error) => setError(e.message))
+  }, [ready, refreshTemplates])
 
   const refresh = useCallback(async () => {
     const [allBatches, rows, health] = await Promise.all([
@@ -155,7 +170,13 @@ export default function App() {
     return result
   }, {})
   const verified = receipts.filter(r => r.status === 'verified')
-  const visible = receipts.filter(r => filter === 'all' || r.status === filter)
+  const visible = receipts.filter(r => (filter === 'all' || (filter === 'second_review' ? r.second_review : r.status === filter))
+    && (!assigneeFilter || (assigneeFilter === '__unassigned__' ? !r.assignee : r.assignee === assigneeFilter)))
+  if (priority) visible.sort((left, right) => {
+    const rank = (row: Summary) => (row.second_review ? 8 : 0) + (row.status === 'failed' ? 6 : 0) +
+      (row.status === 'needs_review' ? 3 : 0) + (row.error ? 2 : 0)
+    return rank(right) - rank(left)
+  })
   const failures = batchInfo?.files?.filter(f => ['failed', 'pending', 'uploading'].includes(f.state)) || []
 
   async function batchAction(action: string) {
@@ -167,7 +188,7 @@ export default function App() {
     try {
       await saveBeforeLeave.current?.()
       setExportError('')
-      setPreview(await post('/exports/preview', { receipt_ids: [...exportIds] }))
+      setPreview(await post('/exports/preview', { receipt_ids: [...exportIds], template_id: templateId }))
     } catch (e) { setError((e as Error).message) }
   }
 
@@ -175,7 +196,8 @@ export default function App() {
     setExporting(true)
     setExportError('')
     try {
-      const result = await post<{ id: string }>('/exports', { receipt_ids: [...exportIds], include_photos: includePhotos })
+      const result = await post<{ id: string }>('/exports', { receipt_ids: [...exportIds], include_photos: includePhotos,
+        template_id: preview?.template.id || templateId, template_version: preview?.template.version })
       await download('/exports/' + result.id + '/download', 'receiptiq-' + result.id.slice(0, 8) + (includePhotos ? '.zip' : '.csv'))
       setPreview(null)
     } catch (e) { setExportError((e as Error).message) }
@@ -191,6 +213,9 @@ export default function App() {
       <span className="header-divider" />
       <span className="workspace-name">Receipt workspace</span>
       <span className="local-label"><ShieldCheck size={16} /> On this computer</span>
+      <button className="quiet" disabled={!ready} onClick={async () => {
+        try { await saveBeforeLeave.current?.(); setSettingsOpen(true) } catch (e) { setError((e as Error).message) }
+      }}><Settings size={16} /> Settings</button>
     </header>
     <main>
       <div className="workspace-heading">
@@ -213,7 +238,7 @@ export default function App() {
       <p className="import-help">Import one CSV with its referenced photos selected together, or one ZIP containing both.
         CSV alone stores image filenames; CSV + photos export includes the files.</p>
       {!modelsReady && <div className="notice warning"><FileText size={18} />
-        <span>OCR models aren’t installed. Run <code>scripts/setup.ps1</code>, then retry failed receipts.
+        <span>OCR models aren’t installed. Open Settings → Local models to finish setup, then retry failed receipts.
           Manual entry remains available.</span></div>}
       <section className="batch-bar" aria-label="Batch controls">
         <FolderOpen size={19} />
@@ -251,8 +276,15 @@ export default function App() {
             <label className="visually-hidden" htmlFor="status-filter">Filter receipt status</label>
             <select id="status-filter" value={filter} onChange={e => setFilter(e.target.value)} className="filter">
               <option value="all">All statuses</option>
+              <option value="second_review">Needs second review</option>
               {Object.entries(statusNames).map(([value, name]) => <option key={value} value={value}>{name}</option>)}
             </select>
+            <label className="visually-hidden" htmlFor="assignee-filter">Filter by reviewer</label>
+            <select id="assignee-filter" className="filter assignee-filter" value={assigneeFilter} onChange={e => setAssigneeFilter(e.target.value)}>
+              <option value="">All reviewers</option><option value="__unassigned__">Unassigned</option>
+              {[...new Set(receipts.map(row => row.assignee).filter(Boolean))].sort().map(name => <option key={name}>{name}</option>)}
+            </select>
+            <label className="priority-filter"><input type="checkbox" checked={priority} onChange={e => setPriority(e.target.checked)} /> Review priority first</label>
             <div className="queue-list">
               {visible.map((receipt, index) => {
                 const data = JSON.parse(receipt.data_json) as { supplier: string; total: string; currency: string }
@@ -264,6 +296,9 @@ export default function App() {
                   <button className="receipt-select" data-receipt-id={receipt.id} onClick={() => void chooseReceipt(receipt.id)}>
                     <span className="receipt-name">{data.supplier || receipt.original_name}</span>
                     <span className="receipt-file">{receipt.original_name}</span>
+                    {receipt.assignee && <span className="receipt-file">Assigned to {receipt.assignee}</span>}
+                    {!!receipt.second_review && <span className="receipt-file">Needs second review</span>}
+                    {receipt.duplicate_count > 0 && <span className="receipt-file">Duplicate image exists</span>}
                     <span className={'status status-' + receipt.status}>
                       {receipt.status === 'processing' ? <LoaderCircle size={12} className="spin" /> :
                         receipt.status === 'verified' ? <Check size={12} /> : <span className="status-dot" />}
@@ -280,6 +315,8 @@ export default function App() {
         </aside>
         {selected ? <Review key={selected} id={selected} saveBeforeLeave={saveBeforeLeave}
           onChanged={() => void refresh()} onError={setError}
+          onOpenReceipt={id => void chooseReceipt(id)}
+          onSplit={id => { setSelected(''); setBatchId(id); setExportIds(new Set()) }}
           onNext={() => {
             const next = receipts.find(r => r.id !== selected && ['needs_review', 'failed', 'cancelled'].includes(r.status))
             if (next) void chooseReceipt(next.id)
@@ -292,6 +329,9 @@ export default function App() {
         <div><span className="export-icon"><ArrowDownToLine size={19} /></span>
           <div><strong>{exportIds.size} selected for export</strong><p>{receipts.length - verified.length} unfinished or unverified receipts excluded.</p></div></div>
         <div className="export-actions">
+          <label className="csv-format-picker"><span>CSV format</span><select aria-label="CSV format" value={templateId}
+            onChange={e => setTemplateId(e.target.value)}>{templates.map(template => <option key={template.id}
+              value={template.id}>{template.name}</option>)}</select></label>
           <button className="quiet" disabled={!verified.length} onClick={() => setExportIds(new Set(verified.map(r => r.id)))}>Select all verified</button>
           <button className="primary" disabled={!exportIds.size || exporting} onClick={() => void previewExport()}>
             <ArrowDownToLine size={16} /> Preview CSV</button>
@@ -302,7 +342,7 @@ export default function App() {
     {preview && <dialog ref={dialog} className="export-dialog" aria-labelledby="export-title" onCancel={() => setPreview(null)}>
       <div className="panel-title"><h2 id="export-title">Check your CSV</h2><button aria-label="Close preview" onClick={() => setPreview(null)}><X size={20} /></button></div>
       {exportError && <div className="notice error" role="alert">{exportError}</div>}
-      <p>{exportIds.size} verified receipts · {preview.row_count} rows · Receipt line items template</p>
+      <p>{exportIds.size} verified receipts · {preview.row_count} rows · {preview.template.name}</p>
       <p className="muted">Receipt-level totals repeat on each item row. Group by receipt ID before summing totals.</p>
       <div className="csv-scroll"><table><thead><tr>{preview.columns.map(c => <th key={c}>{c}</th>)}</tr></thead>
         <tbody>{preview.rows.map((row, i) => <tr key={i}>{preview.columns.map(c => <td key={c}>{row[c]}</td>)}</tr>)}</tbody></table></div>
@@ -311,5 +351,7 @@ export default function App() {
         <button disabled={exporting} onClick={() => void exportCsv(true)}><ArrowDownToLine size={16} /> Download CSV + photos</button>
         <button className="primary" disabled={exporting} onClick={() => void exportCsv()}><ArrowDownToLine size={16} /> Download CSV</button></div>
     </dialog>}
+    {settingsOpen && <WorkspaceSettings onClose={() => setSettingsOpen(false)}
+      onTemplatesChanged={() => void refreshTemplates().catch((e: Error) => setError(e.message))} />}
   </div>
 }

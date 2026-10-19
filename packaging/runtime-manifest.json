@@ -1,0 +1,19 @@
+{
+  "manifest_version": 1,
+  "embedding_model": "embeddinggemma:300m-qat-q4_0",
+  "ollama": {
+    "version": "0.40.6",
+    "platform": "windows-amd64",
+    "url": "https://github.com/ollama/ollama/releases/download/v0.40.6/ollama-windows-amd64.zip",
+    "sha256": "e359637575302f288d76c0007c408a4be9c7376d59c4f28684d63b232a44b427",
+    "download_bytes": 1471164488,
+    "release_api": "https://api.github.com/repos/ollama/ollama/releases/tags/v0.40.6",
+    "license": "MIT",
+    "port": 11435
+  },
+  "profiles": {
+    "ocr-only": {"label": "OCR only", "model": null, "minimum_free_gb": 2, "approx_download_gb": 0.03},
+    "2b": {"label": "Efficient vision", "model": "qwen3-vl:2b-instruct", "minimum_free_gb": 10, "approx_download_gb": 3.4},
+    "4b": {"label": "Higher quality vision", "model": "qwen3-vl:4b-instruct", "minimum_free_gb": 14, "approx_download_gb": 5.0}
+  }
+}

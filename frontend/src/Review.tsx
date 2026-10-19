@@ -6,11 +6,13 @@ import { ApiError, api, download, post } from './api'
 import type { Receipt, ReceiptData } from './types'
 import PhotoField from './PhotoField'
 import { amount } from './amount'
+import ReceiptAssistance from './ReceiptAssistance'
 
 type Props = { id: string; saveBeforeLeave: MutableRefObject<(() => Promise<void>) | null>;
-  onChanged: () => void; onError: (error: string) => void; onNext: () => void }
+  onChanged: () => void; onError: (error: string) => void; onNext: () => void;
+  onOpenReceipt: (id: string) => void; onSplit: (batchId: string) => void }
 
-export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext }: Props) {
+export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext, onOpenReceipt, onSplit }: Props) {
   const [receipt, setReceipt] = useState<Receipt | null>(null)
   const [draft, setDraft] = useState<ReceiptData | null>(null)
   const draftRef = useRef<ReceiptData | null>(null)
@@ -33,6 +35,12 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
   const undo = useRef<ReceiptData[]>([])
   const photoUploads = useRef(0)
   const [photosBusy, setPhotosBusy] = useState(false)
+  const [allowRetrieval, setAllowRetrieval] = useState(false)
+  const [selecting, setSelecting] = useState(false)
+  const [crop, setCrop] = useState<number[] | null>(null)
+  const cropStart = useRef<number[] | null>(null)
+  const [pageGroups, setPageGroups] = useState('')
+  const flaggedField = useRef(0)
   function photoBusy(value: boolean) {
     photoUploads.current += value ? 1 : -1
     setPhotosBusy(photoUploads.current > 0)
@@ -45,6 +53,7 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
     draftRef.current = result.data
     saved.current = JSON.stringify(result.data)
     revision.current = result.revision
+    setAllowRetrieval(!!result.retrieval_allowed)
   }, [id])
 
   useEffect(() => { void load().catch((e: Error) => onError(e.message)) }, [load]) // eslint-disable-line
@@ -104,12 +113,14 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
   }, [])
 
   useEffect(() => {
-    if (!receipt || !['queued', 'processing'].includes(receipt.status)) return
+    if (!receipt || (!['queued', 'processing'].includes(receipt.status) &&
+      !['queued', 'processing'].includes(receipt.vision_job?.state || ''))) return
     const interval = setInterval(() => {
       if (saving.current || JSON.stringify(draftRef.current) !== saved.current) return
       const expected = revision.current
       void api<Receipt>('/receipts/' + id).then(result => {
         if (revision.current !== expected || saving.current || JSON.stringify(draftRef.current) !== saved.current) return
+        if (result.revision !== revision.current) { setAcknowledged(new Set()); setReason('') }
         setReceipt(result)
         setDraft(result.data)
         draftRef.current = result.data
@@ -118,7 +129,28 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
       }).catch((e: Error) => onError(e.message))
     }, 1800)
     return () => clearInterval(interval)
-  }, [receipt?.status, id, onError]) // eslint-disable-line
+  }, [receipt?.status, receipt?.vision_job?.state, id, onError]) // eslint-disable-line
+
+  useEffect(() => { setCrop(null); setSelecting(false) }, [page, id])
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+        event.preventDefault(); void save().catch((e: Error) => onError(e.message))
+      } else if (event.altKey && event.key === 'ArrowRight') {
+        event.preventDefault()
+        void saveBeforeLeave.current?.().then(onNext).catch((e: Error) => onError(e.message))
+      } else if (event.altKey && event.key === 'ArrowDown' && receipt?.issues.length) {
+        event.preventDefault()
+        const issue = receipt.issues[flaggedField.current++ % receipt.issues.length]
+        const field = issue.field.replace('.pricing', '.unit_price').replace('.arithmetic', '.line_total')
+        const input = document.querySelector<HTMLInputElement>('[data-field="' +
+          CSS.escape(field === 'item_sum' ? 'total' : field) + '"]')
+        input?.focus()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [save, receipt?.issues, onNext, onError, saveBeforeLeave]) // eslint-disable-line
 
   const currentPage = receipt?.pages[page]
   const replacement = draft?.receipt_photo_id || ''
@@ -162,7 +194,7 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
     try {
       await saveBeforeLeave.current?.()
       const result = await post<Receipt>('/receipts/' + id + '/verify', {
-        revision: revision.current, reviewer, acknowledged: [...acknowledged], reason,
+        revision: revision.current, reviewer, acknowledged: [...acknowledged], reason, retrieval_allowed: allowRetrieval,
       })
       setReceipt(result)
       localStorage.setItem('receiptiq-reviewer', reviewer)
@@ -212,6 +244,26 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
             {highlighted.map(line => <rect key={line.id} x={line.box[0]} y={line.box[1]} width={line.box[2] - line.box[0]}
               height={line.box[3] - line.box[1]} />)}
           </svg>}
+          {selecting && !directPhoto && currentPage && variant === 'processed' && <svg className="crop-overlay"
+            viewBox="0 0 1 1" preserveAspectRatio="none" role="img" aria-label="Drag to select receipt region"
+            onPointerDown={event => {
+              event.preventDefault()
+              const bounds = event.currentTarget.getBoundingClientRect()
+              cropStart.current = [(event.clientX - bounds.left) / bounds.width, (event.clientY - bounds.top) / bounds.height]
+              event.currentTarget.setPointerCapture(event.pointerId)
+              setCrop(null)
+            }} onPointerMove={event => {
+              if (!cropStart.current) return
+              const bounds = event.currentTarget.getBoundingClientRect()
+              const x = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width))
+              const y = Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height))
+              const [startX, startY] = cropStart.current
+              setCrop([Math.min(x, startX), Math.min(y, startY), Math.max(x, startX), Math.max(y, startY)])
+            }} onPointerUp={() => { cropStart.current = null }}
+            onPointerCancel={() => { cropStart.current = null }}>
+            <rect x={crop?.[0] || 0} y={crop?.[1] || 0} width={crop ? crop[2] - crop[0] : 0}
+              height={crop ? crop[3] - crop[1] : 0} />
+          </svg>}
         </div> : <div className="image-empty"><FileImage size={36} strokeWidth={1} />
           <p>{pending ? 'Preparing receipt preview…' : 'No preview available. Download the original to inspect it.'}</p></div>}
       </div>
@@ -227,6 +279,35 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
           if (window.confirm('Replace the current fields with the latest OCR draft? You can undo this edit.')) change(receipt.evidence.draft!)
         }}>Use latest OCR draft</button>}
       </details>
+      {receipt.original_mime === 'application/pdf' && receipt.pages.length > 1 && <details className="pdf-groups">
+        <summary>Group PDF pages into receipts</summary>
+        <p>Assign every page once. Separate receipts with semicolons, for example 1,2;3;4,5.
+          The source PDF stays in history and is excluded from new exports.</p>
+        <label className="field"><span>Page groups</span><input value={pageGroups} placeholder="1,2;3"
+          onChange={e => setPageGroups(e.target.value)} /></label>
+        <button type="button" disabled={pending || busy || !pageGroups.trim()} onClick={async () => {
+          setBusy(true)
+          try {
+            await saveBeforeLeave.current?.()
+            const groups = pageGroups.split(';').map(group => group.split(',').map(value => Number(value.trim()) - 1))
+            if (groups.some(group => group.some(value => !Number.isInteger(value) || value < 0)))
+              throw new Error('Use positive page numbers separated by commas and semicolons.')
+            const result = await post<{ id: string }>('/receipts/' + id + '/split',
+              { revision: revision.current, groups })
+            onSplit(result.id)
+          } catch (e) { onError((e as Error).message) }
+          finally { setBusy(false) }
+        }}>Create grouped receipts</button>
+      </details>}
+      <ReceiptAssistance receipt={receipt} draft={draft} pageId={directPhoto ? undefined : currentPage?.id} crop={crop}
+        onSelectRegion={() => { setSelecting(value => !value); setVariant('processed') }}
+        saveDraft={async () => { await saveBeforeLeave.current?.() }}
+        onReceipt={result => { setReceipt(result); onChanged() }}
+        onApplied={result => {
+          setReceipt(result); setDraft(result.data); draftRef.current = result.data
+          revision.current = result.revision; saved.current = JSON.stringify(result.data)
+          setSaveState('Saved locally'); setAcknowledged(new Set()); setReason(''); onChanged()
+        }} onChange={change} onBusy={setBusy} onError={onError} onOpenReceipt={onOpenReceipt} />
     </section>
     <section className="fields-panel" aria-label="Receipt review">
       <div className="panel-title"><h2>Receipt details</h2><span className={'save-state ' + (saveState.startsWith('Save failed') ? 'save-error' : '')} aria-live="polite">
@@ -237,6 +318,12 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
         <p>{receipt.status === 'verified' ? 'Editing these fields requires verification again.' :
           'Compare each field with the receipt. Select a field to see its source.'}</p></div>
       {receipt.error && <div className="notice warning">{receipt.error} You can enter the values manually.</div>}
+      {receipt.duplicates.length > 0 && <div className="notice warning duplicate-notice"><div>
+        <strong>This image already exists in your workspace.</strong>
+        <p>Check the earlier record before exporting another copy.</p>
+        {receipt.duplicates.map(row => <button key={row.id} type="button" onClick={() => onOpenReceipt(row.id)}>
+          Open {row.original_name}</button>)}
+      </div></div>}
       {conflict && <div className="conflict-panel" role="alert"><strong>A newer version was saved. Your draft is kept here.</strong>
         <p>Choose which values to keep before leaving this receipt.</p>
         <div><button type="button" onClick={async () => {
@@ -255,13 +342,13 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
             void load().catch((e: Error) => onError(e.message))
           }
         }}>Load saved version</button></div></div>}
-      <form onSubmit={e => { e.preventDefault(); void verify() }}>
+      <form inert={busy} onSubmit={e => { e.preventDefault(); void verify() }}>
         <div className="field-grid">{([['receipt_date', 'Purchase date'], ['supplier', 'Vendor'],
           ['receipt_number', 'Receipt number']] as const).map(([key, label]) => {
           const issue = receipt.issues.find(issue => issue.field === key)
           return <label key={key} className="field">
             <span>{label}</span>
-            <input value={draft[key]} maxLength={500}
+            <input value={draft[key]} maxLength={500} data-field={key}
               type={key === 'receipt_date' ? 'date' : 'text'}
               placeholder={key === 'receipt_number' ? 'Vendor reference — leave blank if none' : ''}
               onFocus={() => focus(key)} aria-invalid={!!issue?.blocking}
@@ -278,16 +365,17 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
         </div>
         <div className="items-heading"><h3>Line items</h3>
           <label className="total-field"><span>Total: {draft.currency === 'PHP' ? '₱' : draft.currency}</span>
-            <input aria-label="Total" inputMode="decimal" value={draft.total} onFocus={() => focus('total')}
+            <input aria-label="Total" inputMode="decimal" value={draft.total} data-field="total" onFocus={() => focus('total')}
               onChange={e => change({ ...draft, total: e.target.value })} /></label></div>
         {draft.items.map((item, index) => <fieldset className="item-fields" key={item.id || index} disabled={photosBusy}>
           <legend>Line {index + 1}{item.item_number ? ' · Item ' + item.item_number : ''}</legend>
           <label className="item-description"><span>Description</span><input aria-label={'Item ' + (index + 1) + ' description'}
-            value={item.description} placeholder="Description" onFocus={() => focus('items.' + index + '.description')}
+            value={item.description} placeholder="Description" data-field={'items.' + index + '.description'} onFocus={() => focus('items.' + index + '.description')}
             onChange={e => change({ ...draft, items: draft.items.map((value, i) => i === index ? { ...value, description: e.target.value } : value) })} /></label>
           {(['quantity', 'unit', 'unit_price', 'line_total', 'item_type'] as const).map((key, position) => <label key={key}><span>{['Quantity', 'Unit', 'Unit price', 'Amount', 'Type'][position]}</span>
             <input aria-label={'Item ' + (index + 1) + ' ' + ['Quantity', 'Unit', 'Unit price', 'Amount', 'Type'][position]}
               inputMode={['unit', 'item_type'].includes(key) ? 'text' : 'decimal'}
+              data-field={'items.' + index + '.' + key}
               value={item[key]} placeholder={key === 'unit' ? 'bag, pc, m...' : ''}
               list={key === 'item_type' ? 'expense-types' : undefined}
               onFocus={() => focus('items.' + index + '.' + key)}
@@ -336,6 +424,17 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
         </div>}
         <div className="verification"><label className="field"><span>Reviewed by</span><input value={reviewer} required maxLength={100}
           placeholder="Your name or initials" onChange={e => setReviewer(e.target.value)} /></label>
+          <label className="acknowledgment"><input type="checkbox" checked={allowRetrieval} onChange={async e => {
+            const allowed = e.target.checked
+            setAllowRetrieval(allowed)
+            if (receipt.status !== 'verified') return
+            try {
+              const result = await post<Receipt>('/receipts/' + id + '/review-options', {
+                revision: revision.current, assignee: receipt.assignee, second_review: false, retrieval_allowed: allowed,
+              })
+              setReceipt(result)
+            } catch (e) { setAllowRetrieval(!allowed); onError((e as Error).message) }
+          }} /><span>Use this verified receipt and its corrections for future local suggestions.</span></label>
           <p>Verify only after checking the image and resolving the flagged fields.</p>
           <div className="verify-actions"><button className="primary" type="submit" disabled={busy || photosBusy || pending || receipt.status === 'verified'}>
             {busy ? <LoaderCircle className="spin" size={16} /> : <Check size={17} />}
@@ -344,6 +443,7 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
               try { await saveBeforeLeave.current?.(); onNext() } catch (e) { onError((e as Error).message) }
             }}>Next receipt <ChevronRight size={16} /></button></div></div>
       </form>
+      <p className="keyboard-help">Ctrl+S saves · Alt+Right opens next receipt · Alt+Down selects next flagged field</p>
       <details className="history" onToggle={e => {
         if (e.currentTarget.open) void api<typeof history>('/receipts/' + id + '/history').then(setHistory).catch((e: Error) => onError(e.message))
       }}><summary>Review history</summary>{history.map((event, index) => <p key={index}>Revision {event.revision} · {event.action}

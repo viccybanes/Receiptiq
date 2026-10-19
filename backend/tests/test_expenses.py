@@ -235,6 +235,7 @@ def test_v1_migration_backup_keeps_verified_data_and_export(client):
     assert result["status"] == "verified" and result["verified_revision"] == receipt["revision"]
     assert result["data"]["supplier"] == receipt["data"]["supplier"]
     assert result["data"]["items"][0]["item_number"] > 0
+    assert migrated.one("PRAGMA user_version")["user_version"] == 3
     assert result["evidence"]["draft"]["notes"] == ""
     assert result["evidence"]["draft"]["items"][0]["id"]
     assert client.get(export_path).content == old_export

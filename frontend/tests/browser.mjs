@@ -4,15 +4,16 @@ import path from 'node:path'
 import { chromium } from 'playwright'
 
 const root = path.resolve('..')
+const baseURL = process.env.RECEIPTIQ_TEST_URL || 'http://127.0.0.1:8765'
 const artifacts = path.join(root, 'artifacts', 'screenshots')
 await fs.mkdir(artifacts, { recursive: true })
 const browser = await chromium.launch({ headless: true })
-const context = await browser.newContext({ baseURL: 'http://127.0.0.1:8765',
+const context = await browser.newContext({ baseURL,
   viewport: { width: 1440, height: 1080 }, acceptDownloads: true })
 const page = await context.newPage()
 const errors = []
 page.on('pageerror', error => errors.push(error.message))
-await page.goto('http://127.0.0.1:8765')
+await page.goto(baseURL)
 await page.getByRole('heading', { name: 'Add expense', exact: true }).waitFor()
 await page.waitForFunction(() => !document.querySelector('.workspace-heading button')?.disabled)
 await page.screenshot({ path: path.join(artifacts, 'workspace-start.png'), fullPage: true })
