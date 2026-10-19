@@ -35,9 +35,17 @@ EXIF rotation and small-angle deskew run automatically. The rotate control rotat
 
 ## CSV behavior
 
-The default template emits one row per item, with receipt fields repeated. A reviewed receipt without items emits one summary row. **Do not sum repeated receipt-level totals across item rows; group by receipt ID.**
+The expense template emits one row per item, with receipt fields repeated. At least one line item is required for verification. **Do not sum repeated receipt-level totals across item rows; group by Receipt ID.**
 
-Columns: receipt_id, supplier, receipt_number, receipt_date, currency, item_description, quantity, unit_price, line_total, subtotal, tax, discount, total.
+Columns: Receipt ID, Purchase date, Vendor, Receipt number, Receipt photo, Notes, Item number, Description, Quantity, Unit, Unit price, Amount, Type, Photo of item purchased, Total.
+
+The review form follows the expense-entry wording. Type defaults to Materials and accepts workplace-specific text. Receipt numbers combine distinct labeled codes in reading order, for example TRANS #: 00-0045 and SI #: 00-0029 become 00-0045 / 00-0029. Item numbers are assigned locally on save and remain stable across edits and reordering.
+
+Tax, subtotal, and discount controls are omitted. Existing legacy values remain stored for compatibility. Compare Amount against Quantity × Unit price, then compare the sum of Amount against Total. Differences are review warnings, never automatic discounts. If a receipt-level difference is confirmed as a discount, the explicit allocation action distributes net Amounts proportionally in cents and recalculates effective Unit prices. Notes record the confirmed adjustment. An overage is flagged for missing items/prices/charges instead.
+
+JPG/PNG item photos are optional. Receipt photo uses the uploaded original by default; a replacement photo can be attached. Download CSV produces filenames only. Download CSV + photos produces a ZIP containing receipts.csv and the referenced original receipt images/PDFs and optional item photos under relative paths. A receiving application's importer must resolve those paths to attach the files; CSV itself cannot carry image attachments.
+
+Import CSV + photos accepts either one ZIP containing exactly one CSV and its images, or one CSV with referenced photos selected together. Headers use the column names above; Purchase date, Vendor, Description, Quantity, Unit price, and Amount are required columns. Receipt ID groups rows; without it, matching receipt details group rows. Supply Total explicitly; if omitted, it is inferred from Amount and marked in Notes for checking. ISO and day/month/year dates are accepted. Missing referenced photos are reported in Notes. Imports always require fresh verification and do not rerun OCR over the structured fields. Limits: 2 MB CSV, 5,000 rows, 500 receipts, 200 MB uploaded bundle, 500 MB expanded ZIP, and 25 MB per photo. New local item numbers are assigned on import.
 
 Values use decimal strings and Python Decimal for validation, ISO dates, UTF-8 with BOM, comma separators, and standard CSV quoting. Empty values stay blank. Text that could execute as a spreadsheet formula receives a leading apostrophe. Generated files and verified snapshots remain reproducible after later edits.
 
@@ -53,6 +61,8 @@ $env:RECEIPTIQ_DATA_DIR = 'D:\ReceiptIQData'
 
 This milestone does not encrypt data or provide user accounts. Protect the Windows account and disk. To back up this development release, stop the application and copy the whole workspace, including originals and SQLite sidecar files if present. Automatic backup/update workflows arrive with desktop distribution.
 
+Schema v2 preserves existing records, verification revisions, and generated exports. Upgrading a v1 SQLite database first creates a consistent database backup under backups/before-v2-*.sqlite3. Keep the full workspace backup as well: the migration backup contains database records, not image files. Older binaries reject v2 workspaces; restore a stopped full v1 workspace to roll back.
+
 The API binds to loopback, validates host/origin, and requires a per-launch session token. Files are served by database ID. Uploaded originals never enter Git. Export history contains the data exported at that time; removing a receipt does not erase downloaded CSV copies or historical export snapshots.
 
 ## Architecture
@@ -63,6 +73,7 @@ The API binds to loopback, validates host/origin, and requires a per-launch sess
 - backend/app/imaging.py, ocr.py, extraction.py: preprocessing, local Paddle adapter, conservative parsing and validation.
 - backend/app/worker.py: durable single-worker queue and restart recovery.
 - backend/app/service.py: review revisions, verification rules, CSV snapshots.
+- backend/app/transfer.py: bounded CSV/ZIP import and owned photo attachments.
 
 API routes use /api/v1. Create a batch manifest, upload each file with its batch/upload IDs, poll states, edit using the expected revision, verify, and export verified IDs. See [PLAN.md](PLAN.md) for the complete API and four-milestone architecture.
 

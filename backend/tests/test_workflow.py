@@ -86,7 +86,7 @@ def test_ocr_parse_decimal_validation():
     data["total"] = "124.00"
     issues = validate(data)
     assert any(issue["field"] == "receipt_date" and issue["blocking"] for issue in issues)
-    assert any(issue["field"] == "total_arithmetic" and not issue["blocking"] for issue in issues)
+    assert any(issue["field"] == "item_sum" and not issue["blocking"] for issue in issues)
 
 
 def test_security_and_limits(client):
@@ -129,8 +129,8 @@ def test_verification_export_edit_invalidation_and_history(client):
     assert exported.status_code == 201, exported.text
     csv_before = client.get("/api/v1/exports/" + exported.json()["id"] + "/download").content
     rows = list(csv.DictReader(io.StringIO(csv_before.decode("utf-8-sig"))))
-    assert rows[0]["supplier"] == "NORTHSIDE MARKET"
-    assert rows[0]["line_total"] == "100.00"
+    assert rows[0]["Vendor"] == "NORTHSIDE MARKET"
+    assert rows[0]["Amount"] == "100.00"
     receipt["data"]["supplier"] = "Changed supplier"
     edit = client.patch("/api/v1/receipts/" + receipt["id"],
                         json={"revision": receipt["revision"], "data": receipt["data"]})
@@ -149,7 +149,7 @@ def test_warning_resolution_and_csv_injection_unicode(client):
     receipt, _ = ready_receipt(client)
     receipt["data"]["supplier"] = "=HYPERLINK(\"bad\")"
     receipt["data"]["receipt_number"] = "  +COMMAND"
-    receipt["data"]["items"] = [{"description": "Café, rice\n\"large\"", "quantity": "", "unit_price": "", "line_total": ""}]
+    receipt["data"]["items"] = [{"description": "Café, rice\n\"large\"", "quantity": "", "unit_price": "", "line_total": "125.00"}]
     edit = client.patch("/api/v1/receipts/" + receipt["id"],
                         json={"revision": receipt["revision"], "data": receipt["data"]}).json()
     assert verify(client, edit).status_code == 422
@@ -160,9 +160,9 @@ def test_warning_resolution_and_csv_injection_unicode(client):
     exported = client.post("/api/v1/exports", json={"receipt_ids": [receipt["id"]]}).json()
     data = client.get("/api/v1/exports/" + exported["id"] + "/download").content
     row = next(csv.DictReader(io.StringIO(data.decode("utf-8-sig"))))
-    assert row["supplier"].startswith("'=") and row["receipt_number"].startswith("'+")
-    assert row["item_description"] == 'Café, rice\n"large"'
-    assert row["quantity"] == ""
+    assert row["Vendor"].startswith("'=") and row["Receipt number"].startswith("'+")
+    assert row["Description"] == 'Café, rice\n"large"'
+    assert row["Quantity"] == ""
 
 
 def test_low_ocr_score_requires_review_not_probability():
@@ -247,7 +247,7 @@ def test_concurrent_upload_retries_only_create_one_receipt(client):
 
 def test_summary_only_validation_does_not_invent_values():
     data = blank_data()
-    assert data["total"] == "" and data["currency"] == "" and data["items"] == []
+    assert data["total"] == "" and data["currency"] == "PHP" and data["items"] == []
     issues = validate(data)
     assert len([issue for issue in issues if issue["blocking"]]) == 4
 

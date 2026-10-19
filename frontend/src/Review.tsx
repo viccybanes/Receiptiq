@@ -4,14 +4,11 @@ import { ArrowDownToLine, Check, ChevronLeft, ChevronRight, FileImage, LoaderCir
   RotateCw, Save, ShieldCheck, Trash2, Undo2, ZoomIn, ZoomOut } from 'lucide-react'
 import { ApiError, api, download, post } from './api'
 import type { Receipt, ReceiptData } from './types'
+import PhotoField from './PhotoField'
+import { amount } from './amount'
 
 type Props = { id: string; saveBeforeLeave: MutableRefObject<(() => Promise<void>) | null>;
   onChanged: () => void; onError: (error: string) => void; onNext: () => void }
-
-const labels: [keyof Omit<ReceiptData, 'items'>, string][] = [
-  ['supplier', 'Supplier'], ['receipt_number', 'Receipt number'], ['receipt_date', 'Receipt date'],
-  ['currency', 'Currency'], ['subtotal', 'Subtotal'], ['tax', 'Tax'], ['discount', 'Discount'], ['total', 'Total'],
-]
 
 export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext }: Props) {
   const [receipt, setReceipt] = useState<Receipt | null>(null)
@@ -34,6 +31,12 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
   const conflictRef = useRef(false)
   const [history, setHistory] = useState<{ revision: number; action: string; reviewer: string; created_at: string }[]>([])
   const undo = useRef<ReceiptData[]>([])
+  const photoUploads = useRef(0)
+  const [photosBusy, setPhotosBusy] = useState(false)
+  function photoBusy(value: boolean) {
+    photoUploads.current += value ? 1 : -1
+    setPhotosBusy(photoUploads.current > 0)
+  }
 
   const load = useCallback(async () => {
     const result = await api<Receipt>('/receipts/' + id)
@@ -56,7 +59,11 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
       method: 'PATCH', body: JSON.stringify({ revision: revision.current, data: snapshot }),
     }).then(result => {
       revision.current = result.revision
-      saved.current = JSON.stringify(snapshot)
+      saved.current = JSON.stringify(result.data)
+      if (JSON.stringify(draftRef.current) === JSON.stringify(snapshot)) {
+        draftRef.current = result.data
+        setDraft(result.data)
+      }
       setReceipt(result)
       setSaveState(JSON.stringify(draftRef.current) === saved.current ? 'Saved locally' : 'Unsaved changes')
       onChanged()
@@ -74,6 +81,7 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
 
   useEffect(() => {
     const flush = async () => {
+      if (photoUploads.current) throw new Error('Wait for photos to finish uploading before leaving or verifying.')
       await save()
       if (JSON.stringify(draftRef.current) !== saved.current) await save()
     }
@@ -89,7 +97,7 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
 
   useEffect(() => {
     const handler = (event: BeforeUnloadEvent) => {
-      if (JSON.stringify(draftRef.current) !== saved.current) { event.preventDefault(); event.returnValue = '' }
+      if (photoUploads.current || JSON.stringify(draftRef.current) !== saved.current) { event.preventDefault(); event.returnValue = '' }
     }
     window.addEventListener('beforeunload', handler)
     return () => window.removeEventListener('beforeunload', handler)
@@ -113,17 +121,22 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
   }, [receipt?.status, id, onError]) // eslint-disable-line
 
   const currentPage = receipt?.pages[page]
+  const replacement = draft?.receipt_photo_id || ''
+  const directPhoto = replacement !== (receipt?.evidence.photo_id || '')
   useEffect(() => {
     setImage('')
-    if (!currentPage) return
+    if (!currentPage && !replacement) return
+    if (directPhoto && !replacement && !receipt?.original_mime.startsWith('image/')) return
     let alive = true
     let url = ''
-    void api<Blob>('/receipts/' + id + '/pages/' + currentPage.id + '?variant=' + variant,
+    const path = directPhoto ? (replacement ? '/photos/' + replacement : '/original') :
+      currentPage ? '/pages/' + currentPage.id + '?variant=' + variant : '/photos/' + replacement
+    void api<Blob>('/receipts/' + id + path,
       { headers: { Accept: 'application/octet-stream' } }).then(blob => {
       if (alive) { url = URL.createObjectURL(blob); setImage(url) }
     }).catch((e: Error) => onError(e.message))
     return () => { alive = false; if (url) URL.revokeObjectURL(url) }
-  }, [id, currentPage?.id, variant, receipt?.rotation]) // eslint-disable-line
+  }, [id, currentPage?.id, variant, receipt?.rotation, replacement, directPhoto]) // eslint-disable-line
 
   function change(next: ReceiptData) {
     if (draftRef.current) {
@@ -181,19 +194,20 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
           onClick={() => void download('/receipts/' + id + '/original', receipt.original_name).catch((e: Error) => onError(e.message))}>
           <ArrowDownToLine size={16} /></button></div>
       <div className="image-toolbar">
-        <select aria-label="Image version" value={variant} onChange={e => setVariant(e.target.value)}>
+        <select aria-label="Image version" value={variant} disabled={directPhoto} onChange={e => setVariant(e.target.value)}>
           <option value="processed">Enhanced image</option><option value="original">Source image</option>
         </select>
         <button className="icon-button" aria-label="Zoom out" disabled={zoom <= 50} onClick={() => setZoom(zoom - 25)}><ZoomOut size={16} /></button>
         <span>{zoom}%</span>
         <button className="icon-button" aria-label="Zoom in" disabled={zoom >= 250} onClick={() => setZoom(zoom + 25)}><ZoomIn size={16} /></button>
         <button className="icon-button" aria-label="Rotate clockwise and rerun OCR" title="Rotate 90° and reread; edits are preserved"
-          disabled={pending || busy} onClick={() => void rotateAndRead()}><RotateCw size={16} /></button>
+          disabled={pending || busy || photosBusy || (receipt.original_mime === 'text/csv' && !replacement)}
+          onClick={() => void rotateAndRead()}><RotateCw size={16} /></button>
       </div>
       <div className="image-stage">
-        {image && currentPage ? <div className="receipt-image" style={{ width: zoom + '%' }}>
+        {image ? <div className="receipt-image" style={{ width: zoom + '%' }}>
           <img src={image} alt={'Receipt page ' + (page + 1)} />
-          {variant === 'processed' && highlighted.length > 0 && <svg className="evidence-overlay" viewBox={'0 0 ' + currentPage.width + ' ' + currentPage.height}
+          {!directPhoto && currentPage && variant === 'processed' && highlighted.length > 0 && <svg className="evidence-overlay" viewBox={'0 0 ' + currentPage.width + ' ' + currentPage.height}
             aria-label="Highlighted OCR source">
             {highlighted.map(line => <rect key={line.id} x={line.box[0]} y={line.box[1]} width={line.box[2] - line.box[0]}
               height={line.box[3] - line.box[1]} />)}
@@ -242,34 +256,70 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
           }
         }}>Load saved version</button></div></div>}
       <form onSubmit={e => { e.preventDefault(); void verify() }}>
-        <div className="field-grid">{labels.map(([key, label]) => {
+        <div className="field-grid">{([['receipt_date', 'Purchase date'], ['supplier', 'Vendor'],
+          ['receipt_number', 'Receipt number']] as const).map(([key, label]) => {
           const issue = receipt.issues.find(issue => issue.field === key)
-          return <label key={key} className={'field ' + (key === 'supplier' ? 'full-width' : '')}>
-            <span>{label}{['supplier', 'receipt_date', 'currency', 'total'].includes(key) && <span className="required"> *</span>}</span>
-            <input value={draft[key]} maxLength={key === 'currency' ? 3 : key === 'supplier' ? 500 : 100}
-              type={key === 'receipt_date' ? 'date' : 'text'} inputMode={['subtotal', 'tax', 'discount', 'total'].includes(key) ? 'decimal' : 'text'}
-              placeholder={key === 'currency' ? 'e.g. PHP' : key === 'receipt_number' ? 'Optional' : 'Not extracted'}
+          return <label key={key} className="field">
+            <span>{label}</span>
+            <input value={draft[key]} maxLength={500}
+              type={key === 'receipt_date' ? 'date' : 'text'}
+              placeholder={key === 'receipt_number' ? 'Vendor reference — leave blank if none' : ''}
               onFocus={() => focus(key)} aria-invalid={!!issue?.blocking}
-              onChange={e => change({ ...draft, [key]: key === 'currency' ? e.target.value.toUpperCase() : e.target.value })} />
+              onChange={e => change({ ...draft, [key]: e.target.value })} />
             {issue?.blocking && <small className="field-error">{issue.message}</small>}
           </label>
-        })}</div>
-        <div className="items-heading"><h3>Line items <span>{draft.items.length}</span></h3>
-          <button type="button" className="quiet" onClick={() => change({ ...draft, items: [...draft.items,
-            { description: '', quantity: '', unit_price: '', line_total: '' }] })}><Plus size={14} /> Add item</button></div>
-        {draft.items.map((item, index) => <fieldset className="item-fields" key={index}>
-          <legend className="visually-hidden">Item {index + 1}</legend>
+        })}
+          <PhotoField receiptId={id} photoId={draft.receipt_photo_id} label="Receipt photo"
+            original={receipt.original_mime !== 'text/csv'} onBusy={photoBusy} onError={onError}
+            onChange={photoId => change({ ...draftRef.current!, receipt_photo_id: photoId })} />
+          <label className="field full-width"><span>Notes</span><textarea value={draft.notes} maxLength={4000}
+            placeholder="Anything worth remembering about this receipt"
+            onChange={e => change({ ...draft, notes: e.target.value })} /></label>
+        </div>
+        <div className="items-heading"><h3>Line items</h3>
+          <label className="total-field"><span>Total: {draft.currency === 'PHP' ? '₱' : draft.currency}</span>
+            <input aria-label="Total" inputMode="decimal" value={draft.total} onFocus={() => focus('total')}
+              onChange={e => change({ ...draft, total: e.target.value })} /></label></div>
+        {draft.items.map((item, index) => <fieldset className="item-fields" key={item.id || index} disabled={photosBusy}>
+          <legend>Line {index + 1}{item.item_number ? ' · Item ' + item.item_number : ''}</legend>
           <label className="item-description"><span>Description</span><input aria-label={'Item ' + (index + 1) + ' description'}
-            value={item.description} onFocus={() => focus('items.' + index + '.description')}
+            value={item.description} placeholder="Description" onFocus={() => focus('items.' + index + '.description')}
             onChange={e => change({ ...draft, items: draft.items.map((value, i) => i === index ? { ...value, description: e.target.value } : value) })} /></label>
-          {(['quantity', 'unit_price', 'line_total'] as const).map((key, position) => <label key={key}><span>{['Qty', 'Unit price', 'Line total'][position]}</span>
-            <input aria-label={'Item ' + (index + 1) + ' ' + key.replace('_', ' ')} inputMode="decimal"
-              value={item[key]} onFocus={() => focus('items.' + index + '.' + key)}
-              onChange={e => change({ ...draft, items: draft.items.map((value, i) => i === index ? { ...value, [key]: e.target.value } : value) })} /></label>)}
+          {(['quantity', 'unit', 'unit_price', 'line_total', 'item_type'] as const).map((key, position) => <label key={key}><span>{['Quantity', 'Unit', 'Unit price', 'Amount', 'Type'][position]}</span>
+            <input aria-label={'Item ' + (index + 1) + ' ' + ['Quantity', 'Unit', 'Unit price', 'Amount', 'Type'][position]}
+              inputMode={['unit', 'item_type'].includes(key) ? 'text' : 'decimal'}
+              value={item[key]} placeholder={key === 'unit' ? 'bag, pc, m...' : ''}
+              list={key === 'item_type' ? 'expense-types' : undefined}
+              onFocus={() => focus('items.' + index + '.' + key)}
+              onChange={e => {
+                const next = { ...item, [key]: e.target.value }
+                if (key === 'quantity' || key === 'unit_price') next.line_total = amount(next.quantity, next.unit_price) || ''
+                change({ ...draft, items: draft.items.map((value, i) => i === index ? next : value) })
+              }} /></label>)}
+          <PhotoField receiptId={id} photoId={item.photo_id} label="Photo of item purchased" onBusy={photoBusy} onError={onError}
+            onChange={photoId => change({ ...draftRef.current!, items: draftRef.current!.items.map(value =>
+              value.id === item.id ? { ...value, photo_id: photoId } : value) })} />
           <button type="button" className="icon-button remove-item" aria-label={'Remove item ' + (index + 1)}
             onClick={() => change({ ...draft, items: draft.items.filter((_, i) => i !== index) })}><Trash2 size={15} /></button>
         </fieldset>)}
-        {!draft.items.length && <p className="no-items">No items extracted. Add them above, or confirm a summary-only export below.</p>}
+        <datalist id="expense-types"><option value="Materials" /></datalist>
+        <button type="button" className="quiet" disabled={photosBusy} onClick={() => change({ ...draft, items: [...draft.items,
+          { id: crypto.randomUUID(), item_number: null, description: '', quantity: '1', unit: '', unit_price: '',
+            line_total: '', item_type: 'Materials', photo_id: '' }] })}><Plus size={14} /> Add line</button>
+        {!draft.items.length && <p className="no-items">No items extracted. Add one or more line items.</p>}
+        {receipt.reconciliation?.can_allocate && <div className="notice discount-notice"><div>
+          <strong>Possible implicit discount: {receipt.reconciliation.possible_discount}</strong>
+          <p>Line amounts exceed Total. Confirm this is a discount before distributing it across Amount and Unit price.</p>
+          <button type="button" disabled={busy || photosBusy} onClick={async () => {
+            setBusy(true)
+            try {
+              await saveBeforeLeave.current?.()
+              const result = await post<{ data: ReceiptData }>('/receipts/' + id + '/discount-preview',
+                { revision: revision.current, data: draftRef.current })
+              change(result.data)
+            } catch (e) { onError((e as Error).message) }
+            finally { setBusy(false) }
+          }}>Confirm discount and apply to line items</button></div></div>}
         <div className="edit-actions"><button type="button" className="quiet" disabled={!undo.current.length} onClick={() => {
           const previous = undo.current.pop()
           if (previous) { draftRef.current = previous; setDraft(previous); setSaveState('Unsaved changes') }
@@ -287,7 +337,7 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
         <div className="verification"><label className="field"><span>Reviewed by</span><input value={reviewer} required maxLength={100}
           placeholder="Your name or initials" onChange={e => setReviewer(e.target.value)} /></label>
           <p>Verify only after checking the image and resolving the flagged fields.</p>
-          <div className="verify-actions"><button className="primary" type="submit" disabled={busy || pending || receipt.status === 'verified'}>
+          <div className="verify-actions"><button className="primary" type="submit" disabled={busy || photosBusy || pending || receipt.status === 'verified'}>
             {busy ? <LoaderCircle className="spin" size={16} /> : <Check size={17} />}
             {receipt.status === 'verified' ? 'Verified' : 'Verify receipt'}</button>
             <button type="button" onClick={async () => {

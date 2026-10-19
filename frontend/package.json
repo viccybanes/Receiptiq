@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
+    "test:amount": "node tests/amount.mjs",
     "test:browser": "node tests/browser.mjs"
   },
   "dependencies": {

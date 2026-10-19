@@ -2,15 +2,17 @@
 
 import re
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal, InvalidOperation
 
 from .models import blank_data
 
 AMOUNT = r"-?\d[\d,]*\.\d{2}"
+FIELD_LABELS = {"supplier": "Vendor", "receipt_date": "Purchase date", "receipt_number": "Receipt number",
+                "total": "Total", "line_total": "Amount", "quantity": "Quantity", "unit_price": "Unit price"}
 
 
 def decimal(value):
-    if not re.fullmatch(r"-?\d{1,12}(?:\.\d{1,6})?", value):
+    if not re.fullmatch(r"-?\d{1,12}(?:\.\d{1,12})?", value):
         raise ValueError("Use a decimal number without currency symbols or grouping separators.")
     try:
         number = Decimal(value)
@@ -24,6 +26,8 @@ def decimal(value):
 def parse(lines):
     data = blank_data()
     meta = {}
+    receipt_codes = []
+    receipt_code_lines = []
     rows = []
     # Join OCR boxes on the same visual row before interpreting line items.
     for line in sorted(lines, key=lambda line: (line["page"], line["box"][1], line["box"][0])):
@@ -41,7 +45,9 @@ def parse(lines):
         text = row["text"].strip()
         if not text:
             continue
-        if not data["supplier"] and re.search(r"[A-Za-z]{3}", text) and not re.search(r"receipt|invoice", text, re.I):
+        if not data["supplier"] and re.search(r"[A-Za-z]{3}", text) and not re.search(
+            r"receipt|invoice|\b(?:trans|SI|OR)\s*(?:#|no)", text, re.I
+        ):
             assign("supplier", text, row)
         match = re.search(r"\b(20\d{2})[-/](\d{1,2})[-/](\d{1,2})\b", text)
         if match and not data["receipt_date"]:
@@ -49,9 +55,15 @@ def parse(lines):
                 assign("receipt_date", date(*map(int, match.groups())).isoformat(), row)
             except ValueError:
                 pass
-        match = re.search(r"(?:receipt|invoice|OR)\s*(?:no\.?|#|number)\s*[:#]?\s*([\w-]+)", text, re.I)
-        if match:
-            assign("receipt_number", match[1], row)
+        for match in re.finditer(
+            r"\b(?:receipt|invoice|trans(?:action)?|SI|OR)\s*(?:no\.?|#|number)\s*[:#]?\s*([A-Za-z0-9][\w-]*)",
+            text, re.I,
+        ):
+            if match[1] not in receipt_codes:
+                receipt_codes.append(match[1])
+                receipt_code_lines.extend(row["ids"])
+            data["receipt_number"] = " / ".join(receipt_codes)
+            meta["receipt_number"] = {"source": "ocr", "line_ids": receipt_code_lines.copy()}
         currency = re.search(r"\b(PHP|USD|EUR|GBP|JPY|AUD|CAD|SGD)\b", text, re.I)
         if currency:
             assign("currency", currency[1].upper(), row)
@@ -73,16 +85,17 @@ def parse(lines):
         if key:
             assign(key, amount, row)
             continue
-        if re.search(r"\b(cash|change|tender|payment|card|visa|mastercard)\b", text, re.I):
+        if re.search(r"\b(cash|change|tender|payment|card|visa|mastercard|trans|invoice|receipt)\b", text, re.I):
             continue
         match = re.match(
-            r"(.+?)\s+(?:(\d+(?:\.\d+)?)\s*[xX@]\s*(" + AMOUNT + r")\s+)?(" + AMOUNT + r")\s*$", text)
+            r"(.+?)\s+(?:(\d+(?:\.\d+)?)\s*(?:([A-Za-z]{1,12})\s+)?[xX@]\s*("
+            + AMOUNT + r")\s+)?(" + AMOUNT + r")\s*$", text)
         if match and re.search(r"[A-Za-z]", match[1]) and not re.search(r"\b(date|tel|phone)\b", match[1], re.I):
             index = len(data["items"])
-            data["items"].append({"description": match[1].strip(), "quantity": match[2] or "",
-                                  "unit_price": (match[3] or "").replace(",", ""),
-                                  "line_total": match[4].replace(",", "")})
-            for field in data["items"][-1]:
+            data["items"].append({"description": match[1].strip(), "quantity": match[2] or "", "unit": match[3] or "",
+                                  "unit_price": (match[4] or "").replace(",", ""),
+                                  "line_total": match[5].replace(",", ""), "item_type": "Materials", "photo_id": ""})
+            for field in ("description", "quantity", "unit_price", "line_total"):
                 meta[f"items.{index}.{field}"] = {"source": "ocr", "line_ids": row["ids"]}
     return data, meta
 
@@ -93,9 +106,9 @@ def validate(data):
     def issue(field, message, blocking=False):
         issues.append({"id": field, "field": field, "message": message, "blocking": blocking})
 
-    for key in ("supplier", "receipt_date", "currency", "total"):
+    for key in ("supplier", "receipt_date", "total"):
         if not data.get(key):
-            issue(key, f"Enter {key.replace('_', ' ')} from the receipt.", True)
+            issue(key, f"Enter {FIELD_LABELS.get(key, key)} from the receipt.", True)
     if data.get("receipt_date"):
         try:
             if date.fromisoformat(data["receipt_date"]).isoformat() != data["receipt_date"]:
@@ -105,7 +118,7 @@ def validate(data):
     if data.get("currency") and not re.fullmatch("[A-Z]{3}", data["currency"]):
         issue("currency", "Use a three-letter uppercase currency code, such as PHP.", True)
     numbers = {}
-    for key in ("subtotal", "tax", "discount", "total"):
+    for key in ("total",):
         if data.get(key):
             try:
                 numbers[key] = decimal(data[key])
@@ -127,35 +140,86 @@ def validate(data):
         if "line_total" in values:
             item_totals.append(values["line_total"])
         else:
-            issue(prefix + ".line_total", f"Item {i + 1} has no line total.")
+            issue(prefix + ".line_total", f"Line {i + 1} has no Amount.", True)
         if not item["quantity"] or not item["unit_price"]:
             issue(prefix + ".pricing", f"Item {i + 1}: quantity or unit price is missing. Check the original.")
-        if len(values) == 3 and abs(values["quantity"] * values["unit_price"] - values["line_total"]) > Decimal("0.01"):
-            issue(prefix + ".arithmetic", f"Item {i + 1}: quantity × price differs from line total.")
+        if len(values) == 3 and abs(values["quantity"] * values["unit_price"] - values["line_total"]) > Decimal("0.005"):
+            difference = values["quantity"] * values["unit_price"] - values["line_total"]
+            message = (f"Line {i + 1}: Amount is {difference:.2f} below Quantity × Unit price; check a possible discount."
+                       if difference > 0 else f"Line {i + 1}: Amount exceeds Quantity × Unit price. Check the values.")
+            issue(prefix + ".arithmetic", message)
     if not items:
-        issue("items", "No item detail. Confirm a summary-only export is appropriate.")
-    elif len(item_totals) == len(items):
-        if "subtotal" in numbers and abs(sum(item_totals) - numbers["subtotal"]) > Decimal("0.01"):
-            issue("item_sum", "Item totals differ from subtotal.")
-        elif "subtotal" not in numbers and "total" in numbers:
-            expected = sum(item_totals) + numbers.get("tax", 0) - numbers.get("discount", 0)
-            if abs(expected - numbers["total"]) > Decimal("0.01"):
-                issue("item_sum", "Item totals plus tax minus discount differ from receipt total.")
-    if "subtotal" in numbers and "total" in numbers:
-        expected = numbers["subtotal"] + numbers.get("tax", 0) - numbers.get("discount", 0)
-        if abs(expected - numbers["total"]) > Decimal("0.01"):
-            issue("total_arithmetic", "Subtotal plus tax minus discount differs from total; check tax-inclusive amounts.")
+        issue("items", "Add one or more line items.", True)
+    elif len(item_totals) == len(items) and "total" in numbers:
+        difference = sum(item_totals) - numbers["total"]
+        if abs(difference) > Decimal("0.005"):
+            message = (f"Line Amounts exceed Total by {difference:.2f}. This may be an implicit discount; "
+                       "confirm against the receipt before allocating it." if difference > 0 else
+                       f"Total exceeds line Amounts by {-difference:.2f}. Check missing items, prices, or charges.")
+            issue("item_sum", message)
     return issues
+
+
+def reconcile(data):
+    try:
+        amounts = [decimal(item["line_total"]) for item in data["items"]]
+        if not amounts:
+            return None
+        total = decimal(data["total"])
+        difference = sum(amounts) - total
+        return {"item_sum": str(sum(amounts)), "total": str(total),
+                "possible_discount": str(difference) if difference > Decimal("0.005") else "",
+                "can_allocate": difference > Decimal("0.005") and total >= 0 and all(
+                    amount >= 0 and decimal(item["quantity"]) > 0
+                    for amount, item in zip(amounts, data["items"]))}
+    except (ValueError, KeyError):
+        return None
+
+
+def allocate_discount(data):
+    result = reconcile(data)
+    if not result or not result["can_allocate"]:
+        raise ValueError("A positive difference, nonnegative Amounts, and positive Quantities are needed.")
+    target = decimal(data["total"])
+    if target != target.quantize(Decimal("0.01")):
+        raise ValueError("Total must use no more than two decimal places for allocation.")
+    note = f"Confirmed discount {result['possible_discount']} allocated across line items from Total."
+    notes = (data.get("notes", "") + "\n" + note).strip()
+    if len(notes) > 4000:
+        raise ValueError("Shorten Notes before applying the discount.")
+    amounts = [decimal(item["line_total"]) for item in data["items"]]
+    subtotal = sum(amounts)
+    target_cents = int(target * 100)
+    shares = [Decimal(target_cents) * amount / subtotal for amount in amounts]
+    cents = [int(share.to_integral_value(rounding=ROUND_DOWN)) for share in shares]
+    order = sorted(range(len(cents)), key=lambda i: shares[i] - cents[i], reverse=True)
+    for index in order[:target_cents - sum(cents)]:
+        cents[index] += 1
+    for item, amount in zip(data["items"], cents):
+        net = Decimal(amount) / 100
+        try:
+            unit_price = (net / decimal(item["quantity"])).quantize(Decimal("0.000000000001"), rounding=ROUND_HALF_UP)
+            decimal(format(unit_price, "f"))
+        except (InvalidOperation, ValueError) as exc:
+            raise ValueError("This quantity needs more price precision. Adjust this line manually.") from exc
+        if (unit_price * decimal(item["quantity"])).quantize(Decimal("0.01")) != net:
+            raise ValueError("This quantity needs more price precision. Adjust this line manually.")
+        item["unit_price"] = format(unit_price.normalize(), "f")
+        item["line_total"] = f"{net:.2f}"
+    data["notes"] = notes
+    return data
 
 
 def receipt_issues(receipt):
     issues = validate(receipt["data"])
     scores = {line["id"]: line["score"] for line in receipt["evidence"]["lines"]}
     for field, evidence in receipt["field_meta"].items():
+        if field not in ("supplier", "receipt_date", "receipt_number", "total") and not field.startswith("items."):
+            continue
         if evidence.get("source") != "ocr":
             continue
         if any(scores.get(line_id, 1) < 0.8 for line_id in evidence.get("line_ids", [])):
             issues.append({"id": field + ".ocr", "field": field,
-                           "message": f"Check {field.replace('_', ' ')}: OCR had difficulty reading its source.",
+                           "message": f"Check {FIELD_LABELS.get(field, field.replace('_', ' '))}: OCR had difficulty reading its source.",
                            "blocking": False})
     return issues

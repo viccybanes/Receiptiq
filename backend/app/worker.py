@@ -8,6 +8,7 @@ import time
 from .db import Store, now, uid
 from .extraction import parse
 from .imaging import pages, preprocess
+from .models import ReceiptData
 from .ocr import PaddleEngine
 
 logger = logging.getLogger(__name__)
@@ -69,10 +70,19 @@ class Worker:
         started = time.monotonic()
         receipt = self.store.receipt(job["receipt_id"])
         document = self.store.one("SELECT * FROM documents WHERE id=?", (receipt["document_id"],))
+        photo_id = receipt["data"].get("receipt_photo_id", "")
+        if photo_id:
+            document = self.store.one("SELECT * FROM attachments WHERE id=? AND receipt_id=?",
+                                      (photo_id, receipt["id"]))
+        preview_only = job.get("kind") == "preview"
         lines = []
         directory = self.store.root / "pages" / receipt["id"]
         directory.mkdir(exist_ok=True)
-        for number, image in enumerate(pages(self.store.file(document["relative_path"]), document["mime_type"])):
+        images = [] if document["mime_type"] == "text/csv" else pages(
+            self.store.file(document["relative_path"]), document["mime_type"])
+        page_count = 0
+        for number, image in enumerate(images):
+            page_count = number + 1
             if self.cancelled(job):
                 return
             original, processed, transform = preprocess(image, receipt["rotation"])
@@ -93,23 +103,29 @@ class Worker:
                      width, height, json.dumps(transform)))
                 connection.execute("UPDATE jobs SET stage=?,progress=?,updated_at=? WHERE id=?",
                                    (f"Reading page {number + 1}", min(90, 10 + number * 5), now(), job["id"]))
-            for line in self.engine.recognize(self.store.file(processed_relative)):
-                lines.append({**line, "id": f"{number}-{len(lines)}", "page": number})
+            if not preview_only:
+                for line in self.engine.recognize(self.store.file(processed_relative)):
+                    lines.append({**line, "id": f"{number}-{len(lines)}", "page": number})
             if self.cancelled(job):
                 return
-        data, metadata = parse(lines)
+        data, metadata = (receipt["data"], {}) if preview_only else parse(lines)
+        data = ReceiptData.model_validate(data).model_dump()
         result = {"lines": lines, "draft": data, "seconds": round(time.monotonic() - started, 3),
+                  "photo_id": photo_id,
                   "notice": "OCR suggestions require human verification."}
         with self.store.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             current = connection.execute(
                 "SELECT revision, EXISTS(SELECT 1 FROM review_events WHERE receipt_id=receipts.id "
-                "AND action='edit') AS manually_edited FROM receipts WHERE id=?", (receipt["id"],)).fetchone()
+                "AND action IN ('edit','import')) AS manually_edited FROM receipts WHERE id=?", (receipt["id"],)).fetchone()
             state = connection.execute("SELECT state FROM jobs WHERE id=?", (job["id"],)).fetchone()
             if not current or state["state"] == "cancelled":
                 return
+            connection.execute("DELETE FROM document_pages WHERE receipt_id=? AND page_number>=?",
+                               (receipt["id"], page_count))
             connection.execute("INSERT INTO extraction_runs VALUES(?,?,?,?,?)",
-                               (uid(), receipt["id"], "PaddleOCR 3.0.3 / CPU", json.dumps(result), now()))
+                               (uid(), receipt["id"], "CSV preview" if preview_only else "PaddleOCR 3.0.3 / CPU",
+                                json.dumps(result), now()))
             # Any human edit wins. Reprocessing still records evidence and an alternative draft.
             if not current["manually_edited"]:
                 self.store.write_data(connection, receipt["id"], data)

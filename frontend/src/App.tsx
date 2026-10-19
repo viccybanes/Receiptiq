@@ -29,6 +29,8 @@ export default function App() {
   const [dragging, setDragging] = useState(false)
   const [queueOpen, setQueueOpen] = useState(true)
   const input = useRef<HTMLInputElement>(null)
+  const importInput = useRef<HTMLInputElement>(null)
+  const [importMessage, setImportMessage] = useState('')
   const resumeBatch = useRef<Batch | null>(null)
   const saveBeforeLeave = useRef<(() => Promise<void>) | null>(null)
   const dialog = useRef<HTMLDialogElement>(null)
@@ -128,6 +130,26 @@ export default function App() {
     }
   }
 
+  async function importFiles(files: File[]) {
+    if (!files.length || uploading || !ready) return
+    setUploading(true); setError(''); setImportMessage('')
+    try {
+      await saveBeforeLeave.current?.()
+      const documents = files.filter(file => /\.(csv|zip)$/i.test(file.name))
+      if (documents.length !== 1) throw new Error('Choose one CSV or ZIP, plus any photos referenced by the CSV.')
+      const form = new FormData(); form.append('file', documents[0])
+      files.filter(file => file !== documents[0]).forEach(file => form.append('photos', file))
+      const result = await api<{ id: string; receipt_count: number; warnings: string[] }>('/imports', { method: 'POST', body: form })
+      setSelected(''); setBatchId(result.id); setExportIds(new Set())
+      setImportMessage(result.receipt_count + ' receipts imported for review. ' +
+        (result.warnings.length ? result.warnings.length + ' missing photo(s); details saved in Notes.' : ''))
+    } catch (e) { setError((e as Error).message) }
+    finally {
+      setUploading(false)
+      if (importInput.current) importInput.current.value = ''
+    }
+  }
+
   const counts = receipts.reduce<Record<string, number>>((result, receipt) => {
     result[receipt.status] = (result[receipt.status] || 0) + 1
     return result
@@ -149,12 +171,12 @@ export default function App() {
     } catch (e) { setError((e as Error).message) }
   }
 
-  async function exportCsv() {
+  async function exportCsv(includePhotos = false) {
     setExporting(true)
     setExportError('')
     try {
-      const result = await post<{ id: string }>('/exports', { receipt_ids: [...exportIds] })
-      await download('/exports/' + result.id + '/download', 'receiptiq-' + result.id.slice(0, 8) + '.csv')
+      const result = await post<{ id: string }>('/exports', { receipt_ids: [...exportIds], include_photos: includePhotos })
+      await download('/exports/' + result.id + '/download', 'receiptiq-' + result.id.slice(0, 8) + (includePhotos ? '.zip' : '.csv'))
       setPreview(null)
     } catch (e) { setExportError((e as Error).message) }
     finally { setExporting(false) }
@@ -172,7 +194,11 @@ export default function App() {
     </header>
     <main>
       <div className="workspace-heading">
-        <div><h1>A little less data entry.</h1><p>Upload a batch. Check the details. Get on with your day.</p></div>
+        <div><h1>Add expense</h1><p>Record a receipt with one or more line items. Each line gets its own item number on save.</p></div>
+        <button disabled={!ready || uploading} onClick={() => importInput.current?.click()}>Import CSV + photos</button>
+        <input ref={importInput} type="file" multiple accept=".csv,.zip,image/jpeg,image/png,application/pdf"
+          className="visually-hidden" aria-label="Choose CSV or ZIP and optional photos"
+          onChange={e => void importFiles([...e.target.files || []])} />
         <button className="primary" disabled={!ready || uploading} onClick={() => { resumeBatch.current = null; input.current?.click() }}>
           {uploading ? <LoaderCircle className="spin" size={17} /> : <Plus size={18} />}
           {uploading ? 'Uploading ' + uploadProgress.done + ' / ' + uploadProgress.total : 'Upload receipts'}
@@ -183,6 +209,9 @@ export default function App() {
       </div>
       {error && <div role="alert" className="notice error"><span>{error}</span>
         <button aria-label="Dismiss error" onClick={() => setError('')}><X size={16} /></button></div>}
+      {importMessage && <div className="notice" role="status">{importMessage}</div>}
+      <p className="import-help">Import one CSV with its referenced photos selected together, or one ZIP containing both.
+        CSV alone stores image filenames; CSV + photos export includes the files.</p>
       {!modelsReady && <div className="notice warning"><FileText size={18} />
         <span>OCR models aren’t installed. Run <code>scripts/setup.ps1</code>, then retry failed receipts.
           Manual entry remains available.</span></div>}
@@ -279,6 +308,7 @@ export default function App() {
         <tbody>{preview.rows.map((row, i) => <tr key={i}>{preview.columns.map(c => <td key={c}>{row[c]}</td>)}</tr>)}</tbody></table></div>
       {preview.row_count > preview.rows.length && <p>Showing first {preview.rows.length} rows. Download includes all rows.</p>}
       <div className="dialog-actions"><button onClick={() => setPreview(null)}>Back to review</button>
+        <button disabled={exporting} onClick={() => void exportCsv(true)}><ArrowDownToLine size={16} /> Download CSV + photos</button>
         <button className="primary" disabled={exporting} onClick={() => void exportCsv()}><ArrowDownToLine size={16} /> Download CSV</button></div>
     </dialog>}
   </div>

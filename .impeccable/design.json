@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-19T09:01:37.433745+00:00",
+  "generatedAt": "2026-10-19T09:59:14.548705+00:00",
   "title": "Design System: ReceiptIQ",
   "extensions": {
     "colorMeta": {
@@ -350,8 +350,8 @@
     {
       "name": "Receipt field",
       "kind": "input",
-      "description": "A persistently labeled field with the readable empty-extraction placeholder.",
-      "html": "<label class=\"ds-field\"><span>Discount</span><input placeholder=\"Not extracted\" aria-label=\"Discount\" /></label>",
+      "description": "A persistent receipt label with a contextual, readable placeholder.",
+      "html": "<label class=\"ds-field\"><span>Receipt number</span><input placeholder=\"Vendor reference — leave blank if none\" aria-label=\"Receipt number\" /></label>",
       "css": ".ds-field{font-family:\"Segoe UI\",system-ui,sans-serif;display:flex;flex-direction:column;gap:6px;color:var(--ink,#22342b)}.ds-field>span{font-size:11px;font-weight:600}.ds-field input{font-family:\"Segoe UI\",system-ui,sans-serif;min-width:0;min-height:37px;padding:8px 10px;background:var(--paper,#fff);color:var(--ink,#22342b);border:1px solid var(--line-strong,#c7d0c7);border-radius:5px;font-size:12px;line-height:1.5;font-variant-numeric:tabular-nums;caret-color:var(--green,#27634c)}.ds-field input::placeholder{color:var(--muted,#637168);opacity:1}.ds-field input:focus{border-color:var(--green,#27634c)}.ds-field input:focus-visible{outline:2px solid var(--green,#27634c);outline-offset:3px;}",
       "refersTo": "input"
     },
@@ -384,6 +384,20 @@
       "html": "<div class=\"ds-error\" role=\"alert\">Export failed. Retry download.</div>",
       "css": ".ds-error{font-family:\"Segoe UI\",system-ui,sans-serif;display:flex;align-items:center;gap:10px;padding:12px 15px;border:1px solid #ebc5bd;border-radius:5px;margin-bottom:16px;background:#fdf0ed;color:#8c3026;font-size:14px;line-height:1.5}",
       "refersTo": "error-notice"
+    },
+    {
+      "name": "Line item card",
+      "kind": "custom",
+      "description": "A ruled line card with a saved Item number and responsive expense fields.",
+      "html": "<fieldset class=\"ds-item\"><legend>Line 1 · Item 41</legend><label class=\"ds-description\"><span>Description</span><input value=\"Coffee\" /></label><label><span>Quantity</span><input value=\"2\" /></label><label><span>Unit</span><input value=\"bag\" /></label><label><span>Unit price</span><input value=\"40.005\" /></label><label><span>Amount</span><input value=\"80.01\" /></label><label><span>Type</span><input value=\"Materials\" /></label></fieldset>",
+      "css": ".ds-item{font-family:\"Segoe UI\",system-ui,sans-serif;position:relative;padding:14px 12px;margin:0 0 12px;border:1px solid var(--line,#dfe5de);border-radius:7px;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;min-width:0;color:var(--ink,#22342b);background:var(--paper,#fff)}.ds-item legend{color:var(--muted,#637168);font-size:11px;padding:0 6px}.ds-item label{display:flex;flex-direction:column;gap:5px;min-width:0}.ds-item label>span{font-size:11px;font-weight:600}.ds-description{grid-column:1/-1}.ds-item input{box-sizing:border-box;width:100%;min-width:0;min-height:32px;padding:6px 8px;border:1px solid var(--line-strong,#c7d0c7);border-radius:5px;font-family:inherit;font-size:12px;line-height:1.5;color:inherit;background:var(--paper,#fff);font-variant-numeric:tabular-nums;caret-color:var(--green,#27634c)}.ds-item input:focus{border-color:var(--green,#27634c)}.ds-item input:focus-visible{outline:2px solid var(--green,#27634c);outline-offset:3px}@media(max-width:1150px){.ds-item{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:600px){.ds-item{grid-template-columns:repeat(2,minmax(0,1fr))}}"
+    },
+    {
+      "name": "Photo upload",
+      "kind": "custom",
+      "description": "A labeled, dashed upload control for receipt or optional item evidence; attached uploads gain a thumbnail and remove action.",
+      "html": "<div class=\"ds-photo\"><span>Photo of item purchased</span><label class=\"ds-photo-button\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><path d=\"M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z\"/><circle cx=\"12\" cy=\"13\" r=\"3\"/></svg>Add photo<input type=\"file\" accept=\"image/jpeg,image/png\" aria-label=\"Photo of item purchased — Add photo\" /></label></div>",
+      "css": ".ds-photo{font-family:\"Segoe UI\",system-ui,sans-serif;color:var(--ink,#22342b);font-size:11px;min-width:0}.ds-photo>span{display:block;margin-bottom:5px}.ds-photo-button{display:inline-flex;align-items:center;gap:6px;border:1px dashed var(--line-strong,#c7d0c7);border-radius:5px;padding:8px;cursor:pointer;font-size:12px;position:relative}.ds-photo-button input{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.ds-photo-button:focus-within{outline:2px solid var(--green,#27634c);outline-offset:3px}"
     }
   ],
   "narrative": {

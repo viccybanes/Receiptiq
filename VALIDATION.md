@@ -4,12 +4,15 @@ Executed October 19, 2026 on the development Windows machine. These are measured
 
 ## Application checks
 
-- Backend: 15 pytest cases passed. Includes 50/100-image queues with deterministic OCR, restart recovery, concurrent upload retry idempotency, corrupt-file isolation, two-page PDF rendering, validation, Decimal arithmetic, CSV quoting/Unicode/formula protection, stale revision rejection, manual verification after OCR failure, reprocessing protection, and verified-export invalidation.
+- Backend: 23 pytest cases passed. Includes 50/100-image queues with deterministic OCR, restart recovery, concurrent upload retry idempotency, corrupt-file isolation, two-page PDF rendering, validation, Decimal arithmetic, CSV quoting/Unicode/formula protection, stale revision rejection, manual verification after OCR failure, reprocessing protection, and verified-export invalidation.
 - Ruff: backend, scripts, and packaging entry checks passed.
 - Frontend: TypeScript and Vite production build passed.
-- Browser: Chromium exercised a four-file upload using real PaddleOCR, including a PDF; autosave, review, verification, CSV preview/download, invalidation after edits, save-conflict recovery, and simulated export failure followed by successful retry passed. Root horizontal overflow checks passed at 1440px and 390px.
+- Frontend Amount checks: 9 decimal-string multiplication/rounding examples passed, including fractional cents, negatives, large values, and invalid inputs.
+- Browser: Chromium exercised a four-file upload using real PaddleOCR, including a PDF; autosave, review, verification, CSV preview/download, invalidation after edits, save-conflict recovery, and simulated export failure followed by successful retry passed. Expense wording, optional photo upload, explicit discount allocation, and CSV/photo ZIP export and re-import passed. Root horizontal overflow checks passed at 1440px and 390px. Early browser failures were test timing races; waits now require the new batch, completed allocation, and finished import preview.
 - Frontend production dependency audit: npm audit --omit=dev found zero vulnerabilities.
-- UI finish review: disposition ship after correcting placeholder contrast and making export errors visible inside the dialog. The verdict applies to the reviewed UI and fixes, not backend or distribution certification.
+- UI finish review: disposition ship for the follow-up expense form using settled desktop/mobile captures, with no material fixes. Existing placeholder contrast and in-dialog export error behavior remain. The verdict applies to the reviewed UI, not backend or distribution certification.
+
+Expense API checks cover ordered/deduplicated TRANS/SI/receipt codes; stable owned Item numbers; Unit/Type/Notes; exact-cent, explicitly confirmed discount allocation without automatic mutation; overages and zero/invalid/extreme quantities; owned photos and cross-receipt access rejection; optional item photos; CSV+selected images and ZIP round trips; unverified import state; preview without OCR; missing-photo notes; unsafe ZIP paths; malformed headers; transaction/file rollback; and schema-v1 backup/migration preserving verified revisions, old OCR drafts, and existing export bytes. Older summary-only verified records must gain required expense fields before generating the new format.
 
 One upstream Starlette/AnyIO deprecation warning appeared during pytest. It did not fail tests.
 
@@ -35,12 +38,14 @@ Generated evidence is local and ignored by Git:
 - artifacts/real-batch.json
 - artifacts/screenshots/desktop.png, mobile.png, export-error.png
 - artifacts/browser-export.csv
+- artifacts/browser-export.zip
+- .impeccable/review/desktop.png, mobile.png (settled expense review captures)
 
 ## Distribution limits
 
-The PyInstaller directory bundle is an early packaging feasibility artifact. A successful OCR smoke check has run with Python absent from the child process PATH. The repeatable package check also validates the packaged API, native SQLite, current index, and its referenced frontend assets. See artifacts/package-check.json for the latest package probe result.
+The PyInstaller directory bundle is an early packaging feasibility artifact. The final package check passed with Python absent from the child process PATH: real OCR, API, native SQLite, current frontend assets, CSV/photo ZIP import, unverified review, explicit verification, and ZIP export with the original photo bytes. Every frozen application module was compared against current source. This caught an archive built during an edit; the final archive was rebuilt and matched. See artifacts/package-check.json for the latest result.
 
-This machine already has developer prerequisites installed. No clean Windows VM, separate CPU-only computer, signed installer, upgrade migration, or real handwritten receipt corpus was available for validation. Those claims must not be inferred from these checks. Tauri and installer/update validation remain milestone 4.
+This machine already has developer prerequisites installed. No clean Windows VM, separate CPU-only computer, signed installer, installer/update upgrade, or real handwritten receipt corpus was available for validation. Schema v1-to-v2 migration was tested separately, including backup, preserved verification, and unchanged old exports. The normal local workspace also passed receipt state/revision, document hash, and original-file preservation checks against its migration backup. Tauri and installer/update validation remain milestone 4.
 
 ## Reproduce
 

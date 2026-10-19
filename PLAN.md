@@ -79,6 +79,8 @@ IDs are UUID strings; timestamps are UTC. Use foreign keys, transactions, and nu
 
 Create tables when their milestone needs them. Field metadata can initially be JSON to avoid a separate row for every field. Reviewer labels in early audit records can link to reviewer IDs in M3.
 
+Implemented expense follow-up: schema v2 adds attachments (owned receipt/item photos) and line_item_numbers (persistent item UUID to local number). Editable header/item values use JSON in receipts and receipt_items; Notes, Unit, Type, and photo references are included. Legacy Tax/Subtotal/Discount values remain stored but are absent from the form and CSV. PHP is the explicit initial workplace default. Migration creates a consistent pre-v2 database backup and retains existing verification revisions and export files.
+
 Receipt states: `queued -> processing -> needs_review -> verified`, with `failed` and `needs_second_review` branches. Export history is separate from review state. Editing a verified receipt increments its revision, clears current verification, invalidates its pending export eligibility, and schedules its old retrieval entries for removal. Previously generated export snapshots remain unchanged.
 
 Write verification and pending indexing records in one SQLite transaction. The worker retries Chroma indexing; retrieval always checks current SQLite verification/revision before using a hit. Rebuild vectors from verified data after corruption or embedding-model changes. Deleting a receipt removes related files and vectors through a retryable cleanup operation.
@@ -147,9 +149,19 @@ Prefix endpoints with `/api/v1`. React uses HTTP; desktop startup supplies a per
 
 Validation distinguishes blockers from reviewable warnings. Invalid numeric values and missing template-required fields block verification/export. An ambiguous date or total mismatch requires correction or a recorded human resolution where allowed. No auto-approval by OCR score. Treat unavailable values as blanks, not zero.
 
-Default CSV: one row per receipt item, repeating supplier/date/receipt ID; an explicitly reviewed receipt without item detail can produce a summary row with blank item columns. M3 adds one-row-per-receipt templates, renamed/reordered columns, constants, required fields, delimiter, encoding, and date/decimal formats. Template mappings use an allowlist, not executable expressions. Handle quotes/newlines with Python csv; protect spreadsheet-facing text cells from formula injection while retaining valid numeric negatives.
+Default CSV: one row per receipt item, repeating Vendor/Purchase date/Receipt ID. The expense format requires at least one line item; it uses the supplied form's wording and omits Tax/Subtotal/Discount columns. Receipt number joins distinct labeled codes with " / ". Optional item photos and receipt images travel in a ZIP alongside CSV with relative image paths. Import creates unverified review drafts. Total differences require human review; confirmed implicit discounts can be allocated explicitly across Amount and Unit price. M3 adds one-row-per-receipt templates, renamed/reordered columns, constants, required fields, delimiter, encoding, and date/decimal formats. Template mappings use an allowlist, not executable expressions. Handle quotes/newlines with Python csv; protect spreadsheet-facing text cells from formula injection while retaining valid numeric negatives.
 
 **Milestone 1 — Working OCR, review, and CSV MVP**
+
+Expense transfer API additions in milestone 1:
+
+| Method and path | Contract |
+|---|---|
+| POST /imports | CSV plus selected photos, or a CSV/image ZIP; atomic import into unverified drafts and preview-only jobs |
+| POST /receipts/{id}/photos | Validate and store an owned JPG/PNG; return attachment ID for the revision-safe draft save |
+| GET /receipts/{id}/photos/{photo_id} | Serve only an attachment owned by this receipt |
+| POST /receipts/{id}/discount-preview | Expected revision plus proposed fields; return proportional net Amount/Unit price adjustments without saving |
+| POST /exports | Optional include_photos selects ZIP with CSV and relative images; otherwise ordinary CSV |
 
 - Build the React/FastAPI application and initial SQLite migrations.
 - Select or drag in tens of JPG/PNG receipt images at once, with PDF support retained. Upload files incrementally into a persistent batch; preserve originals and preprocess pages.

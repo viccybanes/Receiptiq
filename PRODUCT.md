@@ -26,4 +26,4 @@ Name: ReceiptIQ. No binding visual assets or aesthetic supplied. Independent app
 Human verification precedes export. Preserve originals and corrections. Represent uncertainty honestly. Keep batches responsive and recoverable.
 
 ## Open Decisions
-Receipt languages beyond English, workplace-specific fields, and measured minimum hardware remain undecided. Initial interface uses English and requires users to confirm currency and dates.
+Receipt languages beyond English and measured minimum hardware remain undecided. The English expense form follows the supplied workplace wording: Purchase date, Vendor, Receipt number, Receipt photo, Notes; Description, Quantity, Unit, Unit price, Amount, Type, and optional Photo of item purchased. PHP and Materials are initial defaults; recognized currency is retained internally. CSV dates use ISO format. The receiving workplace application has no CSV importer yet; CSV/ZIP follows this documented format for its future importer.

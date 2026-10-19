@@ -154,11 +154,11 @@ The hierarchy is compact and practical. Page headings have restrained negative t
 
 ## Layout
 
-The page is centered within a maximum width of 1760px. The desktop header is 74px tall; main content has 30px top padding and 36px horizontal padding. A title and upload action precede the batch controls, connected review workspace, and export footer.
+The page is centered within a maximum width of 1760px. The desktop header is 74px tall; main content has 30px top padding and 36px horizontal padding. The "Add expense" heading and "Record a receipt with one or more line items. Each line gets its own item number on save." subtitle precede import and upload actions, batch controls, the connected review workspace, and export footer.
 
 The desktop workbench uses a 244px queue followed by `minmax(280px, 1fr)` image and `minmax(350px, 1.04fr)` form columns. Its minimum height is 620px. At 1500px and wider, the queue becomes 260px and the image and form receive larger minimums. At 1150px and below, page padding and column minimums tighten.
 
-At 920px and below, the queue moves above the two review columns. Receipt rows become a horizontally scrolling strip with a Show/Hide control; the queue footer disappears. At 600px and below, queue, image, and form stack vertically, the upload action fills the available width, secondary header text disappears, and the export footer stacks. The receipt field grid retains two columns, with the supplier spanning both; item descriptions span their three numeric fields.
+At 920px and below, the queue moves above the two review columns. Receipt rows become a horizontally scrolling strip with a Show/Hide control; the queue footer disappears. At 600px and below, queue, image, and form stack vertically, the import and upload actions each fill the available width, secondary header text disappears, and the export footer stacks. The receipt field grid retains two columns: Purchase date beside Vendor, Receipt number beside Receipt photo, and full-width Notes. Each line card has a full-width Description above Quantity, Unit, Unit price, Amount, and Type. These five fields use five columns on desktop, three at 1150px and below, and two on phones; the optional item photo spans the card width.
 
 Desktop form padding is 20px by 22px. Receipt field gaps are 15px vertically and 14px horizontally. Fine separators define item groups, verification, and history. The image stage scrolls independently for zoomed receipts. The CSV preview scrolls in its own container and keeps column headings visible.
 
@@ -189,7 +189,13 @@ The batch bar, workbench, and export footer form one connected white container w
 
 ### Inputs and fields
 
-Inputs use white paper, a strong rule, the field radius, a 37px minimum height, and 8px by 10px padding. Focus changes the border to evergreen. Placeholders explicitly use mineral ink at full opacity, including "Not extracted," so empty extracted fields remain readable. Labels stay visible above values. Blocking issues use a warm border, a near-white warm fill, and an accompanying error message; warning acknowledgments use checkboxes and a reason field.
+Inputs use white paper, a strong rule, the field radius, a 37px minimum height, and 8px by 10px padding. Focus changes the border to evergreen. Placeholders use mineral ink at full opacity. Receipt number explains that a missing vendor reference can stay blank; Notes and Unit have short contextual hints. Labels stay visible above values, and Purchase date uses the native date control. Blocking issues use a warm border, a near-white warm fill, and an accompanying error message; warning acknowledgments use checkboxes and a reason field.
+
+### Line cards and photos
+
+Line items sit in lightly rounded, outlined fieldsets with a muted legend showing the line position and stable Item number after saving. Description and the optional Photo of item purchased span the full width; compact value fields use 32px minimum heights. Total stays beside the Line items heading. A possible implicit discount appears in an evergreen-wash notice with an explicit confirmation action before Amount and Unit price are adjusted.
+
+Receipt photo and item-photo controls accept user-uploaded JPEG or PNG images. A dashed Add photo or Replace photo control sits beside an original-attachment label or a 48px square thumbnail, with a quiet Remove photo action for uploaded images. Keyboard focus outlines the upload control. Images are evidence supplied by users, not decorative assets.
 
 ### Queue navigation and status
 
@@ -203,7 +209,9 @@ The image stage holds a white receipt sheet and its subtle shadow. A compact too
 
 Save state appears beside the receipt-details heading with a small icon and live text. Verification has its own reviewer field, instruction, primary action, and next-receipt action. The verified state explicitly says "Verified by a person" and explains that editing requires verification again. History is a separate disclosure below the form.
 
-### CSV preview and errors
+### Import, CSV preview, and errors
+
+An outlined Import CSV + photos action sits beside the primary Upload receipts action. Short helper text explains selecting one CSV with referenced photos or one ZIP containing both. The preview offers Download CSV and Download CSV + photos actions; the latter packages the images in a ZIP.
 
 The native modal is limited to 1000px or the viewport minus 32px, with an 85vh maximum height. A scrollable table has sticky headings, compact tabular text, and a note that receipt totals repeat per item row. Download failures appear as an alert **inside the open dialog**, directly below its heading, keeping the message visible with the retry action. The preview stays open after a failed download.
 

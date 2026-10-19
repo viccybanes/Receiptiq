@@ -19,7 +19,7 @@ from filelock import FileLock, Timeout
 from starlette.concurrency import run_in_threadpool
 
 from .db import Store, data_directory, now, uid
-from .extraction import receipt_issues
+from .extraction import allocate_discount, receipt_issues, reconcile
 from .imaging import inspect_file
 from .models import BatchInput, Edit, ExportInput, Process, Verify, blank_data
 from .ocr import models_ready
@@ -32,6 +32,7 @@ from .service import (
     require_receipt,
     verify_receipt,
 )
+from .transfer import MAX_BUNDLE, add_photo, import_expenses
 from .worker import Worker
 
 MAX_UPLOAD = 25 * 1024 * 1024
@@ -88,9 +89,14 @@ def create_app(root=None, *, start_worker=True, engine=None):
             length = request.headers.get("content-length")
             if length is None or not length.isdigit():
                 return JSONResponse({"detail": "Content-Length required"}, 411)
-            limit = MAX_UPLOAD + 1024 * 1024 if request.url.path == "/api/v1/receipts" else 2 * 1024 * 1024
+            path = request.url.path
+            limit = 2 * 1024 * 1024
+            if path == "/api/v1/imports":
+                limit = MAX_BUNDLE + 1024 * 1024
+            elif path == "/api/v1/receipts" or path.endswith("/photos"):
+                limit = MAX_UPLOAD + 1024 * 1024
             if int(length) > limit:
-                return JSONResponse({"detail": "Request too large. Maximum file size is 25 MB."}, 413)
+                return JSONResponse({"detail": "Request too large for this operation."}, 413)
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -260,7 +266,47 @@ def create_app(root=None, *, start_worker=True, engine=None):
     def receipt(receipt_id: str):
         result = require_receipt(store, receipt_id)
         result["issues"] = receipt_issues(result)
+        result["reconciliation"] = reconcile(result["data"])
         return result
+
+    @app.post("/api/v1/imports", status_code=201)
+    async def import_file(file: UploadFile = File(...), photos: list[UploadFile] = File(default=[])):
+        try:
+            async with upload_lock:
+                return await run_in_threadpool(import_expenses, store, file.file, file.filename or "", photos)
+        finally:
+            await file.close()
+            for photo in photos:
+                await photo.close()
+
+    @app.post("/api/v1/receipts/{receipt_id}/photos", status_code=201)
+    async def upload_photo(receipt_id: str, file: UploadFile = File(...)):
+        try:
+            require_receipt(store, receipt_id)
+            async with upload_lock:
+                return await run_in_threadpool(add_photo, store, receipt_id, file.file, file.filename or "Photo")
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        finally:
+            await file.close()
+
+    @app.get("/api/v1/receipts/{receipt_id}/photos/{photo_id}")
+    def photo(receipt_id: str, photo_id: str):
+        row = store.one("SELECT * FROM attachments WHERE id=? AND receipt_id=?", (photo_id, receipt_id))
+        if not row:
+            raise HTTPException(404, "Photo not found")
+        return FileResponse(store.file(row["relative_path"]), media_type=row["mime_type"])
+
+    @app.post("/api/v1/receipts/{receipt_id}/discount-preview")
+    def discount_preview(receipt_id: str, body: Edit):
+        result = require_receipt(store, receipt_id)
+        if result["revision"] != body.revision:
+            raise HTTPException(409, "A newer version was saved. Reload before allocating the discount.")
+        try:
+            data = allocate_discount(body.data.model_dump())
+            return {"data": data, "reconciliation": reconcile(data)}
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     @app.patch("/api/v1/receipts/{receipt_id}")
     def edit(receipt_id: str, body: Edit):
@@ -305,6 +351,8 @@ def create_app(root=None, *, start_worker=True, engine=None):
             result = require_receipt(store, receipt_id)
             if result["status"] in ("queued", "processing"):
                 raise HTTPException(409, "Receipt already queued")
+            if result["original_mime"] == "text/csv" and not result["data"]["receipt_photo_id"]:
+                raise HTTPException(422, "Add a receipt photo before running OCR.")
             connection.execute("UPDATE receipts SET status='queued',verified_revision=NULL,rotation=?,error=NULL,"
                                "updated_at=? WHERE id=?", (body.rotation, now(), receipt_id))
             connection.execute("DELETE FROM export_queue WHERE receipt_id=?", (receipt_id,))
@@ -349,13 +397,13 @@ def create_app(root=None, *, start_worker=True, engine=None):
         with store.connect() as connection:
             connection.execute("BEGIN")
             selected = export_selection(store, body.receipt_ids)
-            rows = csv_rows(selected)
+            rows = csv_rows(selected, store)
         return {"columns": TEMPLATE["columns"], "rows": rows[:100], "row_count": len(rows),
                 "receipt_count": len(selected)}
 
     @app.post("/api/v1/exports", status_code=201)
     def export(body: ExportInput):
-        return generate_export(store, body.receipt_ids)
+        return generate_export(store, body.receipt_ids, body.include_photos)
 
     @app.get("/api/v1/exports")
     def exports():
@@ -366,8 +414,10 @@ def create_app(root=None, *, start_worker=True, engine=None):
         result = store.one("SELECT * FROM exports WHERE id=?", (export_id,))
         if not result:
             raise HTTPException(404, "Export not found")
-        return FileResponse(store.file(result["relative_path"]), media_type="text/csv",
-                            filename=f"receiptiq-{export_id[:8]}.csv")
+        extension = Path(result["relative_path"]).suffix
+        return FileResponse(store.file(result["relative_path"]),
+                            media_type="application/zip" if extension == ".zip" else "text/csv",
+                            filename=f"receiptiq-{export_id[:8]}{extension}")
 
     @app.delete("/api/v1/receipts/{receipt_id}")
     def delete(receipt_id: str):
@@ -377,11 +427,14 @@ def create_app(root=None, *, start_worker=True, engine=None):
             if result["status"] in ("queued", "processing"):
                 raise HTTPException(409, "Cancel processing before deleting this receipt.")
             document = store.one("SELECT * FROM documents WHERE id=?", (result["document_id"],))
+            attachments = store.read("SELECT relative_path FROM attachments WHERE receipt_id=?", (receipt_id,))
             connection.execute("UPDATE batch_files SET receipt_id=NULL,state='deleted' WHERE id=?",
                                (result["upload_id"],))
             connection.execute("DELETE FROM receipts WHERE id=?", (receipt_id,))
             connection.execute("DELETE FROM documents WHERE id=?", (result["document_id"],))
         store.file(document["relative_path"]).unlink(missing_ok=True)
+        for attachment in attachments:
+            store.file(attachment["relative_path"]).unlink(missing_ok=True)
         shutil.rmtree(store.root / "pages" / receipt_id, ignore_errors=True)
         return {"deleted": True}
 
