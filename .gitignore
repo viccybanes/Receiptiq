@@ -1,0 +1,17 @@
+.bootstrap/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+node_modules/
+frontend/dist/
+build/
+dist/
+.impeccable/
+.local/
+artifacts/
+*.log
+*.tsbuildinfo
+.env

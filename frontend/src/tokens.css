@@ -1,0 +1,14 @@
+:root {
+  color-scheme: light;
+  --ground: #f5f6f3;
+  --paper: #ffffff;
+  --ink: #22342b;
+  --muted: #637168;
+  --green: #27634c;
+  --green-deep: #1b4c39;
+  --green-wash: #eef5ef;
+  --wash: #f3f6f2;
+  --line: #dfe5de;
+  --line-soft: #edf0eb;
+  --line-strong: #c7d0c7;
+}

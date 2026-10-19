@@ -1,0 +1,1 @@
+"""ReceiptIQ local application."""

@@ -1,0 +1,121 @@
+"""One persistent, bounded worker. SQLite jobs survive application restarts."""
+
+import json
+import logging
+import threading
+import time
+
+from .db import Store, now, uid
+from .extraction import parse
+from .imaging import pages, preprocess
+from .ocr import PaddleEngine
+
+logger = logging.getLogger(__name__)
+
+
+class Worker:
+    def __init__(self, store: Store, engine=None):
+        self.store = store
+        self.engine = engine or PaddleEngine(store.root)
+        self.stop = threading.Event()
+        self.thread = None
+
+    def start(self):
+        # App lifecycle holds a workspace lock, so no other instance can own these jobs.
+        with self.store.connect() as connection:
+            connection.execute("UPDATE jobs SET state='queued',stage='Recovered after restart' WHERE state='processing'")
+            connection.execute("UPDATE receipts SET status='queued' WHERE status='processing'")
+        self.thread = threading.Thread(target=self.run, name="receipt-ocr", daemon=True)
+        self.thread.start()
+
+    def close(self):
+        self.stop.set()
+        if self.thread:
+            self.thread.join(timeout=30)
+        # If a native inference call is still active, leave the job persisted for restart.
+
+    def run(self):
+        while not self.stop.is_set():
+            if not self.process_one():
+                self.stop.wait(0.4)
+
+    def process_one(self):
+        with self.store.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            job = connection.execute("SELECT * FROM jobs WHERE state='queued' ORDER BY created_at LIMIT 1").fetchone()
+            if not job:
+                return False
+            job = dict(job)
+            connection.execute("UPDATE jobs SET state='processing',stage='Preparing pages',attempts=attempts+1,"
+                               "updated_at=? WHERE id=?", (now(), job["id"]))
+            connection.execute("UPDATE receipts SET status='processing',error=NULL WHERE id=?", (job["receipt_id"],))
+        try:
+            self.process(job)
+        except Exception as exc:
+            logger.exception("Receipt processing failed for job %s", job["id"])
+            message = str(exc)[:1000] or "OCR failed. Open the receipt for manual entry or retry."
+            with self.store.connect() as connection:
+                connection.execute("UPDATE jobs SET state='failed',stage='Processing failed',error=?,updated_at=? "
+                                   "WHERE id=? AND state='processing'", (message, now(), job["id"]))
+                connection.execute("UPDATE receipts SET status='failed',error=?,updated_at=? "
+                                   "WHERE id=? AND status='processing'", (message, now(), job["receipt_id"]))
+        return True
+
+    def cancelled(self, job):
+        row = self.store.one("SELECT state FROM jobs WHERE id=?", (job["id"],))
+        return self.stop.is_set() or not row or row["state"] == "cancelled"
+
+    def process(self, job):
+        started = time.monotonic()
+        receipt = self.store.receipt(job["receipt_id"])
+        document = self.store.one("SELECT * FROM documents WHERE id=?", (receipt["document_id"],))
+        lines = []
+        directory = self.store.root / "pages" / receipt["id"]
+        directory.mkdir(exist_ok=True)
+        for number, image in enumerate(pages(self.store.file(document["relative_path"]), document["mime_type"])):
+            if self.cancelled(job):
+                return
+            original, processed, transform = preprocess(image, receipt["rotation"])
+            image.close()
+            original_relative = f"pages/{receipt['id']}/{number}-original.png"
+            processed_relative = f"pages/{receipt['id']}/{number}-processed.png"
+            original.save(self.store.file(original_relative))
+            processed.save(self.store.file(processed_relative))
+            width, height = processed.size
+            original.close()
+            processed.close()
+            with self.store.connect() as connection:
+                connection.execute(
+                    "INSERT INTO document_pages VALUES(?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(receipt_id,page_number) DO UPDATE SET width=excluded.width,height=excluded.height,"
+                    "transform_json=excluded.transform_json",
+                    (uid(), receipt["id"], number, original_relative, processed_relative,
+                     width, height, json.dumps(transform)))
+                connection.execute("UPDATE jobs SET stage=?,progress=?,updated_at=? WHERE id=?",
+                                   (f"Reading page {number + 1}", min(90, 10 + number * 5), now(), job["id"]))
+            for line in self.engine.recognize(self.store.file(processed_relative)):
+                lines.append({**line, "id": f"{number}-{len(lines)}", "page": number})
+            if self.cancelled(job):
+                return
+        data, metadata = parse(lines)
+        result = {"lines": lines, "draft": data, "seconds": round(time.monotonic() - started, 3),
+                  "notice": "OCR suggestions require human verification."}
+        with self.store.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            current = connection.execute(
+                "SELECT revision, EXISTS(SELECT 1 FROM review_events WHERE receipt_id=receipts.id "
+                "AND action='edit') AS manually_edited FROM receipts WHERE id=?", (receipt["id"],)).fetchone()
+            state = connection.execute("SELECT state FROM jobs WHERE id=?", (job["id"],)).fetchone()
+            if not current or state["state"] == "cancelled":
+                return
+            connection.execute("INSERT INTO extraction_runs VALUES(?,?,?,?,?)",
+                               (uid(), receipt["id"], "PaddleOCR 3.0.3 / CPU", json.dumps(result), now()))
+            # Any human edit wins. Reprocessing still records evidence and an alternative draft.
+            if not current["manually_edited"]:
+                self.store.write_data(connection, receipt["id"], data)
+                connection.execute("UPDATE receipts SET field_meta_json=?,revision=revision+1 WHERE id=?",
+                                   (json.dumps(metadata), receipt["id"]))
+            connection.execute("UPDATE receipts SET status='needs_review',updated_at=?,error=NULL WHERE id=?",
+                               (now(), receipt["id"]))
+            connection.execute("UPDATE jobs SET state='done',stage='Ready for review',progress=100,error=NULL,"
+                               "updated_at=? WHERE id=?", (now(), job["id"]))
