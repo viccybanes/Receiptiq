@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-19T09:59:14.548705+00:00",
+  "generatedAt": "2026-10-19T18:54:51.703155+00:00",
   "title": "Design System: ReceiptIQ",
   "extensions": {
     "colorMeta": {
@@ -288,7 +288,7 @@
       {
         "name": "export-dialog",
         "value": "0 12px 80px #192e2555",
-        "purpose": "CSV modal above the workspace."
+        "purpose": "Shared native CSV-preview and workspace-settings modal elevation."
       },
       {
         "name": "selected-row",
@@ -372,7 +372,7 @@
     {
       "name": "Workspace panel",
       "kind": "card",
-      "description": "A flat, ruled receipt-details container within the connected workspace.",
+      "description": "The connected receipt workspace uses paper and fine rules; assistance and native settings reuse this surface language.",
       "html": "<section class=\"ds-panel\"><div class=\"ds-panel-title\"><h2>Receipt details</h2><span>Saved locally</span></div><div class=\"ds-panel-body\"><strong>Ready for your review</strong><p>Compare each field with the receipt. Select a field to see its source.</p></div></section>",
       "css": ".ds-panel{font-family:\"Segoe UI\",system-ui,sans-serif;background:var(--paper,#fff);color:var(--ink,#22342b);border:1px solid var(--line,#dfe5de)}.ds-panel-title{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:58px;padding:14px 18px;border-bottom:1px solid var(--line,#dfe5de)}.ds-panel-title h2{margin:0;font-size:14px;font-weight:600}.ds-panel-title>span{font-size:10px;color:var(--muted,#637168)}.ds-panel-body{padding:20px 22px}.ds-panel-body strong{font-size:13px;font-weight:600;color:#765319}.ds-panel-body p{margin:6px 0 0;color:var(--muted,#637168);font-size:12px;line-height:1.5;max-width:60ch}",
       "refersTo": "workspace"
@@ -380,7 +380,7 @@
     {
       "name": "Download error notice",
       "kind": "custom",
-      "description": "The alert shown inside the open CSV preview after a failed download.",
+      "description": "An alert inside the open CSV dialog; native workspace settings uses the same error treatment within its scrolling content.",
       "html": "<div class=\"ds-error\" role=\"alert\">Export failed. Retry download.</div>",
       "css": ".ds-error{font-family:\"Segoe UI\",system-ui,sans-serif;display:flex;align-items:center;gap:10px;padding:12px 15px;border:1px solid #ebc5bd;border-radius:5px;margin-bottom:16px;background:#fdf0ed;color:#8c3026;font-size:14px;line-height:1.5}",
       "refersTo": "error-notice"
@@ -398,11 +398,25 @@
       "description": "A labeled, dashed upload control for receipt or optional item evidence; attached uploads gain a thumbnail and remove action.",
       "html": "<div class=\"ds-photo\"><span>Photo of item purchased</span><label class=\"ds-photo-button\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><path d=\"M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z\"/><circle cx=\"12\" cy=\"13\" r=\"3\"/></svg>Add photo<input type=\"file\" accept=\"image/jpeg,image/png\" aria-label=\"Photo of item purchased — Add photo\" /></label></div>",
       "css": ".ds-photo{font-family:\"Segoe UI\",system-ui,sans-serif;color:var(--ink,#22342b);font-size:11px;min-width:0}.ds-photo>span{display:block;margin-bottom:5px}.ds-photo-button{display:inline-flex;align-items:center;gap:6px;border:1px dashed var(--line-strong,#c7d0c7);border-radius:5px;padding:8px;cursor:pointer;font-size:12px;position:relative}.ds-photo-button input{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.ds-photo-button:focus-within{outline:2px solid var(--green,#27634c);outline-offset:3px}"
+    },
+    {
+      "name": "Local vision suggestion",
+      "kind": "custom",
+      "description": "An evidence-column disclosure with current job status, ruled before/suggested values, and an explicit apply action. Further differences, cited opted-in wording examples, and review assignment use nearby disclosures; applying requires human verification again.",
+      "html": "<section class=\"ds-vision\"><div class=\"ds-vision-job\" role=\"status\">Vision suggestion ready</div><details open><summary>Vision suggestion<span>Qwen3-VL 2B ? 7.4s</span></summary><p>Compare these values with the source. Applying still requires human verification.</p><dl><div><dt>Vendor</dt><dd><span class=\"ds-vision-old\">Northside</span><span class=\"ds-vision-label\">Suggested</span><span>NORTHSIDE MARKET</span></dd></div></dl><button class=\"ds-vision-apply\" type=\"button\"><svg width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><path d=\"m20 6-11 11-5-5\"/></svg>Apply vision suggestion</button></details></section>",
+      "css": ".ds-vision{font-family:\"Segoe UI\",system-ui,sans-serif;color:var(--ink,#22342b);max-width:460px;font-size:12px}.ds-vision-job{padding:10px 12px;margin:12px 0;border:1px solid var(--line,#dfe5de);border-radius:5px;background:var(--wash,#f3f6f2);font-size:11px}.ds-vision details{border-top:1px solid var(--line,#dfe5de);margin-top:18px;padding-top:14px}.ds-vision summary{cursor:pointer;font-size:12px;font-weight:600}.ds-vision summary>span{display:block;margin:5px 0 0 15px;color:var(--muted,#637168);font-size:10px;font-weight:400}.ds-vision p{color:var(--muted,#637168);font-size:11px;line-height:1.55;margin:7px 0 12px}.ds-vision dl{margin:13px 0 0;font-size:11px}.ds-vision dl>div{padding:8px 0;border-bottom:1px solid var(--line-soft,#edf0eb)}.ds-vision dt{font-weight:600;margin-bottom:3px}.ds-vision dd{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:10px;margin:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}.ds-vision-old{color:var(--muted,#637168)}.ds-vision-label{color:var(--green-deep,#1b4c39);font-size:10px;padding-top:1px}.ds-vision-apply{font-family:\"Segoe UI\",system-ui,sans-serif;display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:33px;margin-top:13px;padding:6px 9px;border:1px solid var(--green,#27634c);border-radius:6px;background:var(--green,#27634c);color:var(--paper,#fff);font-size:11px;font-weight:600;cursor:pointer}.ds-vision-apply:hover:not(:disabled){background:var(--green-deep,#1b4c39);border-color:var(--green-deep,#1b4c39)}.ds-vision summary:focus-visible,.ds-vision-apply:focus-visible{outline:2px solid var(--green,#27634c);outline-offset:3px}.ds-vision-apply:disabled{opacity:.48;cursor:not-allowed}@media(max-width:600px){.ds-vision dd{gap:7px}}"
+    },
+    {
+      "name": "Processing profiles",
+      "kind": "custom",
+      "description": "Compact native radios inside the Local models tab of Workspace settings. Ruled rows show profile detail, recommendation, download size, and disk need; only Install selected profile starts a download. The native dialog keeps its tabs and Done footer outside scrolling content.",
+      "html": "<fieldset class=\"ds-profiles\"><legend>Processing profile</legend><label class=\"ds-profile\"><input type=\"radio\" name=\"ds-local-profile\" value=\"ocr-only\"/><span><strong>OCR only</strong><span>The smallest download. Read printed text, then enter or correct the expense details.</span><small>About 0.03 GB download ? 2 GB free space needed</small></span></label><label class=\"ds-profile\"><input type=\"radio\" name=\"ds-local-profile\" value=\"2b\" checked/><span><strong>2B vision <span class=\"ds-profile-recommended\">Recommended for this PC</span></strong><span>A lighter local vision model for reading pages and selected regions. Start here on a modest PC.</span><small>About 3.4 GB download ? 10 GB free space needed</small></span></label><label class=\"ds-profile\"><input type=\"radio\" name=\"ds-local-profile\" value=\"4b\"/><span><strong>4B vision</strong><span>A larger local vision model that needs more memory and disk space. Processing may take longer.</span><small>About 5 GB download ? 14 GB free space needed</small></span></label></fieldset>",
+      "css": ".ds-profiles{font-family:\"Segoe UI\",system-ui,sans-serif;color:var(--ink,#22342b);border:0;padding:0;margin:0 0 13px;min-width:0;max-width:700px}.ds-profiles legend{font-size:13px;font-weight:600;padding:0;margin-bottom:8px}.ds-profile{display:flex;align-items:flex-start;gap:12px;padding:15px 13px;border-bottom:1px solid var(--line,#dfe5de);cursor:pointer}.ds-profile:first-of-type{border-top:1px solid var(--line,#dfe5de)}.ds-profile input{margin:3px 0 0;width:16px;height:16px;min-height:16px;padding:0;accent-color:var(--green,#27634c);flex-shrink:0}.ds-profile>span{display:flex;flex-direction:column;gap:4px;font-size:12px}.ds-profile strong{display:flex;flex-wrap:wrap;align-items:center;column-gap:12px;font-size:13px;font-weight:600}.ds-profile small,.ds-profile>span>span{color:var(--muted,#637168);font-size:11px}.ds-profile-recommended{color:var(--green-deep,#1b4c39);font-size:11px;font-weight:400}.ds-profile input:focus-visible{outline:2px solid var(--green,#27634c);outline-offset:3px}.ds-profile:has(input:checked){background:var(--green-wash,#eef5ef)}"
     }
   ],
   "narrative": {
     "northStar": "A document examination desk",
-    "overview": "ReceiptIQ places a compact batch register beside the receipt image and an editable ledger. Pale mineral surfaces, dark ink, fine rules, and restrained evergreen actions keep attention on the comparison between source evidence and entered values. The system sans typography is self-contained for the local Windows workflow.\n\nThe workspace is dense where users scan receipts and more spacious where they inspect images or correct fields. Verification, saving, and processing have explicit text states; color supports those states rather than carrying their meaning alone.",
+    "overview": "ReceiptIQ places a compact batch register beside the receipt image and an editable ledger. Pale mineral surfaces, dark ink, fine rules, and restrained evergreen actions keep attention on the comparison between source evidence and entered values. The system sans typography is self-contained for the local Windows workflow.\n\nThe workspace is dense where users scan receipts and more spacious where they inspect images or correct fields. Verification, saving, and processing have explicit text states; color supports those states rather than carrying their meaning alone.\n\nLocal assistance and workspace settings extend this same examination desk. Suggestions use ruled comparisons and disclosures; setup, CSV formats, and recovery use compact labeled forms within the existing paper-and-mineral surfaces.",
     "keyCharacteristics": [
       "A connected workspace with ruled panels rather than a collection of floating cards.",
       "Evergreen actions and selection accents on quiet white and mineral surfaces.",
@@ -421,6 +435,10 @@
       "**Do** pair status colors with written labels and icons or dots.",
       "**Do** use the shared mineral ink at full opacity for input and textarea placeholders.",
       "**Do** display download errors inside the CSV dialog while keeping its retry action available.",
+      "**Do** keep suggestions beside source evidence, show their current job state, and require an explicit apply action.",
+      "**Do** show saved-example citations and the opt-in wording beside their actions.",
+      "**Do** keep profile radios compact and Total constrained beside the line-item heading.",
+      "**Do** keep settings errors and staged recovery feedback inside the open native dialog.",
       "**Do** preserve tabular numbers, persistent field labels, and visible keyboard focus.",
       "**Do** honor reduced-motion preferences for working indicators."
     ],
@@ -428,7 +446,9 @@
       "**Don't** use the OCR highlight as a verification indicator.",
       "**Don't** replace the connected workspace panels with independently elevated cards.",
       "**Don't** show a failed download only behind the modal backdrop.",
-      "**Don't** communicate unread, reading, failed, or verified state through color alone."
+      "**Don't** communicate unread, reading, failed, or verified state through color alone.",
+      "**Don't** present a vision suggestion as a verified receipt or similarity as extraction accuracy.",
+      "**Don't** copy historical prices into a current receipt through saved examples."
     ]
   }
 }

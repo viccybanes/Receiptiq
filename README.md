@@ -1,6 +1,14 @@
 # ReceiptIQ
 
-ReceiptIQ turns receipt images into editable, locally stored records and verified CSV exports. This repository implements milestone 1: batch image/PDF uploads, CPU PaddleOCR, manual review, and a fixed CSV format.
+ReceiptIQ turns batches of receipt images into editable local records and verified CSV exports. Version 0.4.0 adds optional local vision, opt-in retrieval, reviewer handoff, CSV formats, backups, and a Windows desktop installer. This is an unsigned preview; see [VALIDATION.md](VALIDATION.md) for measured checks and remaining release gates.
+
+## Windows desktop
+
+Install the versioned **ReceiptIQ Desktop** setup executable from `artifacts/desktop` after building. The installer includes Python, PaddleOCR, and native dependencies; end users need no Python, Node, or Rust installation. WebView2 is required and its bootstrapper can download it during installation if absent. The default program directory is `%LOCALAPPDATA%\ReceiptIQ Desktop`, separate from receipt data in `%LOCALAPPDATA%\ReceiptIQ`.
+
+Open **Workspace settings → Local models**. Choose **OCR only** for printed text and manual entry, or **2B vision** for optional Qwen3-VL readings and similar verified examples. Setup explicitly downloads OCR assets, a pinned private Ollama runtime, and selected models. Downloads need internet; ordinary receipt processing uses local files and loopback only after setup. A failed model setup never prevents manual review or CSV export.
+
+The development laptop's detected 15.7 GB RAM and 6 GB NVIDIA GPU receive the conservative 2B recommendation. Recommendations are capacity checks, not a latency or accuracy guarantee. CPU-only machines can use OCR/manual review; CPU vision and the optional 4B profile have not been validated on a separate machine.
 
 ## Run on Windows
 
@@ -17,7 +25,7 @@ Open **http://127.0.0.1:8765**. Stop with Ctrl+C. For frontend hot reload, keep 
 
 After setup, receipt processing uses no cloud service or API key and works offline. PaddleX brings cloud SDKs as upstream dependencies; ReceiptIQ does not call them. OCR is English-oriented initially. Handwritten or unusual layouts often need manual entry.
 
-The full Windows installer, Tauri host, hardware-aware setup, vision, and RAG belong to later milestones. The portable Python bundle below is an early feasibility build.
+Development launch and installed desktop use the same backend and workspace format. The desktop supplies a per-launch token, supervises its bundled backend, and closes owned child processes when the window exits or crashes. Its private Ollama port is 11435; another Ollama installation on 11434 is untouched.
 
 ## Process a batch
 
@@ -32,6 +40,15 @@ Batch controls cancel unfinished work or retry failed processing. Failed uploads
 Limits: 25 MB per uploaded file, 32 megapixels per image/rendered page, 30 pages per PDF, and 500 files per batch. Tests exercise 50- and 100-image queues. The interface lists up to 500 receipts in a view; use the batch selector for older work.
 
 EXIF rotation and small-angle deskew run automatically. The rotate control rotates 90 degrees and reruns OCR. Reprocessing preserves human edits and stores a separate OCR draft. Selecting a field highlights its source region on the enhanced image; source view and untouched-original download remain available.
+
+## Optional reading and review tools
+
+- **Use vision** reads the selected page. **Select region**, then **Read this region again**, limits the reading to a crop. Current OCR and names/units from eligible examples provide context. A proposal shows changed values and provenance; nothing changes until **Apply vision suggestion**. A saved intervening edit makes the proposal stale. Model errors, cancellation, and timeouts preserve the current receipt.
+- **Similar saved receipts** searches only current verified revisions explicitly allowed for future suggestions. Results cite source receipt/revision and offer Vendor or item wording; quantities and historical prices are excluded. Opting out, editing, deleting, or requesting a second review immediately excludes that receipt, even if a stale vector exists. Retrieval supplies context, not model training.
+- **Review assignment** stores a local reviewer label and a second-review flag. The assigned name must verify a second-review receipt. Names are handoff labels, not accounts or access controls. Queue filters and priority help work through uncertain receipts. Ctrl+S saves, Alt+Right selects the next receipt, and Alt+Down focuses the next uncertain field.
+- Identical original hashes show duplicate warnings without silently discarding files. A multi-page PDF can be split into explicit page groups; every source page must belong to exactly one group. The original stays available as split evidence and the new receipts require review.
+
+One worker runs heavy OCR, vision, or indexing work at a time. Index failure never undoes verification or blocks export. Local search stores 256-dimensional vectors in SQLite and scans at most 10,000 eligible entries; no vector server is needed.
 
 ## CSV behavior
 
@@ -49,6 +66,8 @@ Import CSV + photos accepts either one ZIP containing exactly one CSV and its im
 
 Values use decimal strings and Python Decimal for validation, ISO dates, UTF-8 with BOM, comma separators, and standard CSV quoting. Empty values stay blank. Text that could execute as a spreadsheet formula receives a leading apostrophe. Generated files and verified snapshots remain reproducible after later edits.
 
+The default expense format remains unchanged. **Workspace settings → CSV formats** can create workplace templates with renamed/reordered columns, constants, required fields, one row per item or receipt, comma/semicolon/tab separators, UTF-8/BOM, date format, and decimal separator. Select the format before previewing. Preview/export checks the template version; changing it requires another preview. Each export retains its own template and verified data snapshots. Custom export formats are not automatically import formats; import uses the documented expense headers above.
+
 ## Data and privacy
 
 Default workspace: %LOCALAPPDATA%\ReceiptIQ\. It contains SQLite, untouched originals, rendered pages, model assets, and exports. Application code and user data are separate. Set RECEIPTIQ_DATA_DIR before setup/start to use another local directory; do not put an active SQLite workspace on a network share.
@@ -59,9 +78,13 @@ $env:RECEIPTIQ_DATA_DIR = 'D:\ReceiptIQData'
 .\scripts\start.ps1
 ~~~
 
-This milestone does not encrypt data or provide user accounts. Protect the Windows account and disk. To back up this development release, stop the application and copy the whole workspace, including originals and SQLite sidecar files if present. Automatic backup/update workflows arrive with desktop distribution.
+ReceiptIQ does not encrypt data or provide user accounts. Protect the Windows account and disk. **Workspace settings → Backups** creates a consistent SQLite snapshot with originals, pages, attachments, exports, and settings. Downloaded ZIPs contain sensitive receipt data. Models and runtime caches are omitted. The newest ten completed backups are retained; migration/recovery snapshots remain.
 
-Schema v2 preserves existing records, verification revisions, and generated exports. Upgrading a v1 SQLite database first creates a consistent database backup under backups/before-v2-*.sqlite3. Keep the full workspace backup as well: the migration backup contains database records, not image files. Older binaries reject v2 workspaces; restore a stopped full v1 workspace to roll back.
+Restore validates ZIP paths, checksums, database version, and referenced files before staging. Closing and reopening ReceiptIQ applies the staged restore offline, retains the previous workspace beside it, and reuses model caches. Limits are 2 GB compressed, 4 GB expanded, and 20,000 files. Larger workspaces require a stopped full-directory backup. Do not manually swap a running SQLite database.
+
+Schema v3 preserves existing data, verification revisions, and export bytes. Opening v1/v2 first creates a full workspace ZIP plus a consistent `before-v2-*.sqlite3` or `before-v3-*.sqlite3` database snapshot. Older binaries reject the newer schema. Restore a stopped full pre-upgrade workspace to roll back; do not combine an old database with unrelated new files.
+
+The Backups tab can stage a new empty local storage location. Restart copies and verifies the workspace, then changes `%LOCALAPPDATA%\ReceiptIQ-launch.json` only after success. The source remains for recovery. An explicit `RECEIPTIQ_DATA_DIR` overrides this setting. Installer upgrades and uninstall do not delete the external workspace. Updates are manual; no updater feed is configured.
 
 The API binds to loopback, validates host/origin, and requires a per-launch session token. Files are served by database ID. Uploaded originals never enter Git. Export history contains the data exported at that time; removing a receipt does not erase downloaded CSV copies or historical export snapshots.
 
@@ -74,6 +97,10 @@ The API binds to loopback, validates host/origin, and requires a per-launch sess
 - backend/app/worker.py: durable single-worker queue and restart recovery.
 - backend/app/service.py: review revisions, verification rules, CSV snapshots.
 - backend/app/transfer.py: bounded CSV/ZIP import and owned photo attachments.
+- backend/app/vision.py, retrieval.py: bounded local model adapters and revision-checked wording evidence.
+- backend/app/templates.py, features.py: workplace CSV formats and milestone API routes.
+- backend/app/system.py, backups.py: hardware/setup/runtime ownership, storage relocation, snapshots and offline restore.
+- src-tauri: Windows host, single-instance lifecycle, authenticated backend bootstrap, NSIS installer configuration.
 
 API routes use /api/v1. Create a batch manifest, upload each file with its batch/upload IDs, poll states, edit using the expected revision, verify, and export verified IDs. See [PLAN.md](PLAN.md) for the complete API and four-milestone architecture.
 
@@ -88,23 +115,31 @@ Push-Location frontend
 npm run build
 npx playwright install chromium
 npm run test:browser
+npm run test:milestones
 Pop-Location
 ~~~
 
-Browser checks require the server on port 8765 and generated samples. They add synthetic test receipts to the active workspace. Use a separate test workspace to avoid mixing them with real receipts.
+Browser checks require a running server and generated samples. Set `RECEIPTIQ_TEST_URL` to a private test server (for example `http://127.0.0.1:8766`). They add synthetic receipts and templates to that workspace. Use a separate workspace to avoid mixing tests with real receipts.
 
 ~~~powershell
 .\.venv\Scripts\python.exe scripts\make_samples.py --count 60
 .\.venv\Scripts\python.exe scripts\evaluate_ocr.py --limit 60
+.\.venv\Scripts\python.exe scripts\evaluate_vision.py --manage-runtime --with-ocr --out artifacts/vision-evaluation-final-ocr.json
+.\.venv\Scripts\python.exe scripts\evaluate_retrieval.py
 ~~~
 
-The evaluator blocks outbound socket connections and writes artifacts/ocr-evaluation.json. Cursive fonts simulate a difficult type style; they do **not** establish real handwriting accuracy. See [VALIDATION.md](VALIDATION.md) for executed checks and limits.
+Evaluators use generated samples and write ignored reports under artifacts. Vision/retrieval need an installed 2B profile and exclusive use of its private runtime port; close ReceiptIQ first. Their Python socket guards block non-loopback connections while inference runs. Cursive fonts simulate a difficult type style; they do **not** establish real handwriting accuracy. See [VALIDATION.md](VALIDATION.md) for executed checks and limits.
 
-## Packaging feasibility
+## Build Windows distribution
 
 ~~~powershell
 .\scripts\package.ps1
 .\dist\receiptiq\receiptiq.exe --ocr-smoke .\artifacts\samples\001-printed.png
+.\scripts\build_installer.ps1
+.\.venv\Scripts\python.exe scripts\check_package.py
+.\.venv\Scripts\python.exe scripts\check_desktop.py --executable '<installed ReceiptIQ executable>'
 ~~~
 
-Run setup in the intended workspace first so models/support assets are cached. Ship the whole dist\receiptiq directory, not just its executable. The executable carries Python and native dependencies; models remain in the workspace. This is not yet a signed installer or a clean-machine distribution certification.
+Build prerequisites are Windows x64, the development setup above, the Rust MSVC toolchain, and Visual Studio C++ build tools. `build_installer.ps1` builds frontend, freezes the complete Python directory bundle, and invokes pinned Tauri CLI with the Cargo lock. Use `-SkipBackendBuild` only when that bundle already matches current source. The NSIS installer and SHA-256 build manifest are copied to `artifacts/desktop`. Ship the installer, or the entire portable `dist/receiptiq` folder rather than its executable alone.
+
+For Authenticode signing, set `RECEIPTIQ_CERT_THUMBPRINT` to an existing CurrentUser\My certificate with its private key and `RECEIPTIQ_TIMESTAMP_URL` to the issuer's timestamp service. No certificate is generated or imported. Without credentials the build is explicitly unsigned; clean Windows/CPU-only testing and a real handwritten corpus remain release gates. Pinned runtime/model versions and upstream license references are in [runtime-manifest.json](packaging/runtime-manifest.json) and [THIRD_PARTY_NOTICES.md](packaging/THIRD_PARTY_NOTICES.md).

@@ -1,6 +1,6 @@
 # ReceiptIQ implementation plan
 
-Status: milestone 1 implemented; milestones 2-4 remain planned. See README.md for operation and VALIDATION.md for executed checks and limits. The schema and folder layout below describe the target architecture; backend/app/db.py owns the implemented milestone 1 schema. Initial target: Windows 11 x64, one local workspace per Windows user. Reviewer names support shared-computer handoff; they are labels, not authenticated accounts.
+Status: application code for all four milestones is implemented in version 0.4.0. Vision stays user-triggered. Windows distribution is an unsigned preview pending publisher credentials and clean-machine release testing; implementation does not mean every release gate below has passed. See README.md for operation and VALIDATION.md for executed evidence and untested gates. Initial target: Windows 11 x64, one local workspace per Windows user. Reviewer names support shared-computer handoff; they are labels, not authenticated accounts.
 
 Primary workload: users select or drag in tens of receipt images at once. Multi-image ingestion and durable batch processing are milestone 1 requirements. Design and test for batches of 20-100 images initially; this is a workload target, not a promised throughput or fixed file-count limit. Default to one receipt per image; photos containing several separate receipts require a later splitting/cropping workflow.
 
@@ -11,7 +11,7 @@ Use a modular monolith: React + TypeScript + Vite for the interface, FastAPI for
 ```mermaid
 flowchart TD
     UI[React + TypeScript review interface] --> API[FastAPI on authenticated loopback]
-    Desktop[Tauri desktop host - milestone 4] --> UI
+    Desktop[Tauri Windows desktop host] --> UI
     Desktop --> API
     API --> SQL[(SQLite: receipts, revisions, jobs, templates)]
     API --> Files[Local originals and page images]
@@ -21,7 +21,7 @@ flowchart TD
     OCR --> Draft[Draft structured extraction]
     Draft --> Vision[Ollama + Qwen vision when needed]
     Draft --> Retrieve[Retrieve similar verified examples]
-    Retrieve --> Vector[(Local Chroma index - milestone 3)]
+    Retrieve --> Vector[(SQLite local vector index)]
     Retrieve --> Vision
     Vision --> Validate[Schema and arithmetic validation]
     Draft --> Validate
@@ -32,7 +32,7 @@ flowchart TD
     SQL --> CSV[Verified revision snapshots to Python CSV export]
 ```
 
-The diagram shows the completed system; milestone 1 bypasses vision and retrieval. Keep SQLite as the source of truth and Chroma as a disposable search index. A failed indexing operation must not lose a verified receipt or block CSV export.
+SQLite is the source of truth; the local vector table is rebuildable. The implementation uses a bounded cosine scan of up to 10,000 256-dimensional entries, avoiding a second database dependency. A failed indexing operation never loses a verified receipt or blocks CSV export. Vision produces a separate candidate and requires explicit application; it never automatically overwrites a draft.
 
 Accept a multi-file selection as one logical batch, but transfer files individually with bounded upload concurrency and per-file acknowledgments. Persist each accepted original and its queued job before acknowledging success. Start processing as files arrive; do not wait for the entire batch. Decode only the active document/pages and load preview thumbnails on demand rather than retaining every full-resolution image in RAM. One heavy processing task runs at a time initially, keeping the interface and review API responsive. A corrupt image fails independently without blocking other receipts.
 
@@ -50,9 +50,9 @@ Use CPU PaddleOCR initially to simplify Windows distribution and leave GPU memor
 
 Benchmark `qwen3-vl:2b-instruct` as the low-resource candidate and `qwen3-vl:4b-instruct` as the higher-quality candidate. These are available vision models, not a promise that either will read all handwriting accurately. The official model pages list an Ollama minimum of 0.12.7; pin and test the actual runtime/model pair at implementation. [2B model](https://ollama.com/library/qwen3-vl:2b-instruct), [4B model](https://ollama.com/library/qwen3-vl:4b-instruct).
 
-On the stated RTX 3060 laptop and 16 GB RAM, evaluate both candidates with one vision request at a time. Detect actual free VRAM, available RAM, CPU capabilities, driver compatibility, and free disk space rather than infer capacity from the GPU name. Include context and image memory overhead in testing. CPU-only machines retain the full OCR/manual-review/export workflow; enable CPU vision only after a successful memory/latency probe. Minimum hardware requirements will come from measured results.
+On the stated RTX 3060 laptop and 16 GB RAM, evaluate candidates with one vision request at a time. The implemented probe reads CPU identity/count, installed RAM, GPU/total VRAM/driver, and free workspace disk. It does not promise free-VRAM headroom, CPU instruction compatibility, or successful inference from these values alone. The actual 15.7 GB RAM/6 GB VRAM probe conservatively recommends 2B; that profile has run real local inference. CPU-only machines retain OCR/manual-review/export. Separate CPU vision, 4B quality, peak GPU memory, and measured minimum hardware remain unvalidated release checks.
 
-First-run setup inventories hardware, recommends a tested profile, shows download sizes and disk requirements, downloads required assets with progress/retry, and runs a sample inference. Cache OCR, vision, and embedding models explicitly. After setup, normal receipt processing must work with network access disabled. Do not use cloud model tags or automatic cloud fallbacks.
+Workspace settings inventories hardware, recommends a capacity profile, shows download sizes and disk requirements, and installs assets with persistent progress/retry. Ollama 0.40.6 is SHA-256 verified; only local Qwen3-VL 2B/4B instruct and embeddinggemma:300m-qat-q4_0 tags are allowed. Setup confirms installed model tags and asks users to run a sample; it does not establish inference capacity by downloading alone. Cache OCR, vision, and embeddings explicitly. Normal processing uses no cloud fallback; real evaluations block non-loopback sockets. Setup/downloads require internet.
 
 **Database schema**
 
@@ -60,59 +60,60 @@ IDs are UUID strings; timestamps are UTC. Use foreign keys, transactions, and nu
 
 | Table | Main columns and purpose | Introduced |
 |---|---|---|
-| `documents` | `id`, `original_name`, `relative_path`, `sha256`, `mime_type`, `created_at`; immutable source file | M1 |
-| `document_pages` | `id`, `document_id FK`, `page_number`, `render_path`, `width`, `height`, `transform_json` | M1 |
-| `receipts` | `id`, `status`, `revision`, `supplier`, `receipt_number`, `receipt_date`, `currency`, `subtotal`, `tax`, `discount`, `total`, `field_meta_json`, `verified_revision`, timestamps; later `assignee_id` | M1 |
-| `receipt_pages` | `receipt_id FK`, `page_id FK`, `position`; preserves page grouping | M1 |
-| `receipt_items` | `id`, `receipt_id FK`, `position`, `description`, `quantity`, `unit`, `unit_price`, `discount`, `tax`, `line_total`, `field_meta_json` | M1 |
-| `extraction_runs` | `id`, `receipt_id FK`, engine/model versions, `raw_output_json`, warnings, timing, status; immutable evidence | M1 |
-| `review_events` | `id`, `receipt_id FK`, receipt revision, field path, before/after JSON, action, reviewer label, reason, time; includes verification snapshots | M1 |
-| `jobs` | `id`, `receipt_id FK` nullable, `batch_id FK` nullable, type, state, stage, progress, attempts, error, timestamps | M1 |
-| `csv_templates` | `id`, name, version, row mode, ordered column mapping, format options JSON | M1 fixed default; M3 editor |
+| `documents` | `id`, original name/path, SHA-256, MIME type, timestamp; immutable source file | M1 |
+| `document_pages` | `id`, `receipt_id FK`, page number, original/processed paths, width/height, transform JSON | M1 |
+| `receipts` | IDs for document/batch/upload; status, revision, verified_revision, header `data_json`, field metadata, rotation, error, timestamps; assignee, second_review, retrieval_allowed | M1; M3 flags |
+| `receipt_items` | `receipt_id FK`, position, `data_json` containing stable item ID, wording, quantities, decimal prices/Amount, optional photo | M1 |
+| `extraction_runs` | ID, receipt FK, engine, immutable result JSON, timestamp; OCR evidence and independent revision-bound vision proposals | M1/M2 |
+| `review_events` | ID, receipt FK/revision, action, before/after JSON, reviewer label, reason, timestamp; verification snapshots | M1 |
+| `jobs` | ID, receipt/batch FKs, kind, state, stage, progress, attempts, error, timestamps, payload JSON | M1; M2/M3 kinds |
+| `csv_templates` | ID, version, definition JSON with name, row mode, ordered mappings and format/required-field options | M1 default; M3 editor |
 | `export_queue` | `receipt_id FK`, `verified_revision`, added time; only eligible verified revisions | M1 |
 | `exports` | `id`, template snapshot JSON, local file path, created time | M1 |
 | `export_receipts` | `export_id FK`, `receipt_id FK`, verified revision, data snapshot JSON; reproducible export history | M1 |
-| `reviewers` | `id`, display name; local assignment labels | M3 |
 | `batches` | `id`, name, expected file count, upload state, created time; receipt/job states determine review and processing progress | M1 |
-| `batch_files` | `id`, `batch_id FK`, client upload ID, original name, upload state/error, `document_id FK` nullable; unique batch/client upload ID makes transport retries idempotent | M1 |
-| `retrieval_entries` | `id`, `receipt_id FK`, verified revision, chunk key, embedding version, index state; Chroma document ID matches entry ID | M3 |
+| `batch_files` | client upload ID primary key, batch FK, original name, state/error, receipt ID; unique receipts.upload_id makes retries idempotent | M1 |
+| `attachments` | ID, receipt FK, relative path, original name, MIME, timestamp; owned receipt/item photos | M1 follow-up |
+| `line_item_numbers` | autoincrement number, receipt FK, unique item ID | M1 follow-up |
+| `retrieval_entries` | receipt FK primary key, verified revision, embedding model, text, vector JSON, indexed timestamp | M3 |
 
-Create tables when their milestone needs them. Field metadata can initially be JSON to avoid a separate row for every field. Reviewer labels in early audit records can link to reviewer IDs in M3.
+These are the implemented schema-v3 tables; backend/app/db.py owns exact SQL. Reviewer names remain plain local labels. Header/item values and evidence use JSON; money remains decimal strings. No separate receipt_pages, reviewer-account table, or Chroma server is needed.
 
 Implemented expense follow-up: schema v2 adds attachments (owned receipt/item photos) and line_item_numbers (persistent item UUID to local number). Editable header/item values use JSON in receipts and receipt_items; Notes, Unit, Type, and photo references are included. Legacy Tax/Subtotal/Discount values remain stored but are absent from the form and CSV. PHP is the explicit initial workplace default. Migration creates a consistent pre-v2 database backup and retains existing verification revisions and export files.
 
-Receipt states: `queued -> processing -> needs_review -> verified`, with `failed` and `needs_second_review` branches. Export history is separate from review state. Editing a verified receipt increments its revision, clears current verification, invalidates its pending export eligibility, and schedules its old retrieval entries for removal. Previously generated export snapshots remain unchanged.
+Receipt states: `queued -> processing -> needs_review -> verified`, plus `failed`, `cancelled`, and retained `split` originals. Second review is a separate flag, not a new status. Editing a verified receipt increments its revision, clears current verification, and removes pending export/retrieval eligibility. Previously generated export snapshots remain unchanged.
 
-Write verification and pending indexing records in one SQLite transaction. The worker retries Chroma indexing; retrieval always checks current SQLite verification/revision before using a hit. Rebuild vectors from verified data after corruption or embedding-model changes. Deleting a receipt removes related files and vectors through a retryable cleanup operation.
+Verification and opt-in indexing jobs commit together. Retrieval checks current SQLite verification/revision and opt-in on every hit. Edited, deleted, opted-out, or second-review sources cannot remain eligible through stale vectors. Rebuild the index from current opted-in verified data after an embedding change; failed index work never blocks export.
 
-**Planned folder structure**
+**Implemented folder structure**
 
 ```text
 receiptiq/
   frontend/
     src/
-      features/{upload,review,export,setup}/
-      components/
-      api/
+      App.tsx, Review.tsx, ReceiptAssistance.tsx
+      WorkspaceSettings.tsx, TemplatesEditor.tsx
+      api.ts, types.ts, style.css, settings.css, assistance.css
     package.json
   backend/
     app/
       main.py
-      api/                 # Thin FastAPI routes and request schemas
-      db/                  # SQLite access and migrations
-      services/            # Ingestion, review, validation, export
-      processing/          # Worker, preprocessing, OCR, vision, retrieval
+      main.py, features.py, models.py   # Routes, boundaries and schemas
+      db.py, service.py, transfer.py    # Storage, review, export and imports
+      worker.py, imaging.py, ocr.py, extraction.py
+      vision.py, retrieval.py, templates.py
+      system.py, backups.py            # Setup and workspace lifecycle
     tests/
     pyproject.toml
-  src-tauri/               # Desktop lifecycle and installer, M4
+  src-tauri/               # Rust host, lifecycle, NSIS installer
   packaging/               # Runtime manifest and Python bundle configuration
-  tests/fixtures/          # Synthetic or consented receipts and ground truth
-  docs/
+  scripts/                 # Setup, build, evaluations and smoke checks
+  artifacts/               # Ignored synthetic evidence, screenshots and bundles
 ```
 
-This is the target structure, not a requirement to create empty modules upfront. Start a dedicated ReceiptIQ directory rather than repurpose the existing `future-promised` application in the current workspace.
+Keep this modular monolith until real module size warrants subpackages. Project root is C:\Users\ruthl\Desktop\Codink\ReceiptIQ, separate from the adjacent Frutiger Aero application.
 
-Runtime data lives outside the installation directory, under `%LOCALAPPDATA%\ReceiptIQ\`: SQLite, originals, rendered pages, Chroma, model caches, exports, backups, and bounded logs. Never place user receipts in the repository or installer assets. Local storage is not automatically encrypted; use OS protections initially and make no encryption claim.
+Runtime data lives outside the installation directory, under `%LOCALAPPDATA%\ReceiptIQ\`: SQLite/vectors, originals, pages, attachments, model/runtime caches, exports, backups, and setup state. Storage moves are staged, applied offline, and retain the source. Never place user receipts in the repository or installer assets. Local storage is not encrypted; use OS protections and make no encryption claim.
 
 **API design**
 
@@ -132,19 +133,24 @@ Prefix endpoints with `/api/v1`. React uses HTTP; desktop startup supplies a per
 | `PATCH /receipts/{id}` | Save editable fields/items plus expected revision; return `409` on stale edits |
 | `POST /receipts/{id}/validate` | Return required-field, numeric, date, and total reconciliation issues |
 | `POST /receipts/{id}/verify` | Revalidate expected revision; record reviewer, snapshot, and acknowledgments; enqueue verified revision |
-| `POST /receipts/{id}/process` | Retry OCR or request vision; create a new extraction run without overwriting manual corrections |
+| `POST /receipts/{id}/process` | Retry/rotate OCR; preserve manual corrections |
+| `POST /receipts/{id}/vision` | Revision, page ID, optional normalized crop and allowlisted model; durable proposal job |
+| `POST /receipts/{id}/candidates/{candidate_id}/apply` | Explicitly apply a proposal only at its original expected revision |
 | `GET /jobs/{id}` | State, stage, progress, actionable failure |
 | `POST /jobs/{id}/cancel` | Safe cancellation at processing boundaries |
-| `GET, POST /templates` / `PATCH /templates/{id}` | Read templates; M3 adds customization/versioning |
+| `GET, POST /templates` / `GET, PATCH, DELETE /templates/{id}` | Versioned formats; built-in expense template immutable |
 | `GET /export-queue` | Eligible verified revisions |
 | `POST /exports/preview` | Validate selection and show mapped rows |
 | `POST /exports` | Generate from verified revision snapshots and chosen template; return export ID |
 | `GET /exports/{id}/download` | Download generated CSV |
 | `GET /receipts/{id}/suggestions` | M3: examples, candidate interpretations, and source receipt references |
-| `PATCH /receipts/{id}/assignment` | M3: reviewer, notes, and second-review handoff |
+| `POST /receipts/{id}/review-options` | Revision-safe reviewer, second-review and retrieval opt-in |
+| `POST /receipts/{id}/split` | Partition all original PDF pages once; preserve split source |
 | `GET /system/capabilities` / `GET /setup/status` | M4: hardware, runtime, model, and setup readiness |
 | `POST /setup/install` | M4: install a supported runtime/model profile as a resumable job |
+| `POST /system/location` | Stage an empty local target; copy/verify on restart before switching |
 | `POST /backups` / `POST /backups/restore` | M4: consistent local snapshot and validated restore |
+| `GET /backups` / `GET /backups/{name}/download` | List/download completed workspace archives |
 | `DELETE /receipts/{id}` | Remove receipt and schedule associated data cleanup |
 
 Validation distinguishes blockers from reviewable warnings. Invalid numeric values and missing template-required fields block verification/export. An ambiguous date or total mismatch requires correction or a recorded human resolution where allowed. No auto-approval by OCR score. Treat unavailable values as blanks, not zero.
@@ -190,12 +196,14 @@ Completion gate: compare OCR-only and OCR-plus-vision on the held-out corpus. En
 
 **Milestone 3 — Verified-example retrieval, batch work, and review QOL**
 
-- Add local Chroma persistence and an explicitly downloaded, pinned local text embedding model suited to the supported receipt languages. Chroma provides a disk-persisted client; validate this embedded configuration for the intended desktop workload. [Chroma client documentation](https://docs.trychroma.com/reference/python).
-- Index only current verified supplier/item examples and human-approved correction pairs. Retrieve using text similarity plus supplier/context filters; show the supporting original example and require acceptance.
+- Persist local vectors in SQLite and explicitly download the allowlisted EmbeddingGemma model. This meets the original Chroma-or-another-local-vector-store requirement without another runtime dependency. The scan is bounded to 10,000 eligible entries; measure before replacing it with a dedicated index.
+- Index only current, explicitly opted-in verified supplier/item examples and human-approved wording corrections. Rank vendor/item/correction text by cosine similarity; show the supporting original example and require acceptance. Explicit supplier/category filters are deferred; current ranking includes that context in text.
 - Extend the milestone 1 batch workflow with cross-batch exact-file duplicate warnings, review-priority filters, and manual PDF page grouping/splitting.
 - Retain bounded processing and concurrent human review as vision and retrieval join the batch pipeline; increase processing concurrency only if measured memory and responsiveness permit it.
 - Add local reviewer assignment, “needs second review,” notes, filters, and keyboard actions for save/next/next uncertain field. Provide undo for edits and an explicit “verified for future suggestions” control.
 - Add customizable CSV templates and saved workplace formats.
+
+Implemented in 0.4.0: these review tools, persistent vectors, and template options are present. Retrieval remains advisory; the small synthetic held-out evaluation is documented in VALIDATION.md. No cross-computer sharing or model fine-tuning is implied.
 
 Completion gate: process a 50-document test batch; stop/restart midway without losing edits or duplicating receipts/exports. Confirm unverified, deleted, excluded, or superseded examples cannot appear in retrieval. Test on held-out receipts so an input cannot retrieve itself. Show measured retrieval benefit; unrelated matches must be rejectable without changing the draft. Two reviewer labels can hand off a receipt on the same local workspace with attributable edits.
 

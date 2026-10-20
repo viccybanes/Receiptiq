@@ -109,6 +109,8 @@ ReceiptIQ places a compact batch register beside the receipt image and an editab
 
 The workspace is dense where users scan receipts and more spacious where they inspect images or correct fields. Verification, saving, and processing have explicit text states; color supports those states rather than carrying their meaning alone.
 
+Local assistance and workspace settings extend this same examination desk. Suggestions use ruled comparisons and disclosures; setup, CSV formats, and recovery use compact labeled forms within the existing paper-and-mineral surfaces.
+
 **Key Characteristics:**
 
 - A connected workspace with ruled panels rather than a collection of floating cards.
@@ -162,18 +164,22 @@ At 920px and below, the queue moves above the two review columns. Receipt rows b
 
 Desktop form padding is 20px by 22px. Receipt field gaps are 15px vertically and 14px horizontally. Fine separators define item groups, verification, and history. The image stage scrolls independently for zoomed receipts. The CSV preview scrolls in its own container and keeps column headings visible.
 
+Receipt assistance sits in the evidence column below Recognized text and any PDF grouping controls. Its model choice, wrapping action row, comparison, saved examples, and assignment disclosures remain before Receipt details when the workbench stacks on phones. Assistance uses 18px horizontal padding, 11px supporting text, and fine rules between groups.
+
+Workspace settings uses a native modal, limited to 940px or the viewport minus 32px and 88vh high. Its heading, three-tab navigation, and Done footer surround a separately scrolling content area with 24px padding. At 600px and below, it uses the viewport minus 16px, a 94vh height limit, and 16px horizontal padding. Hardware facts become two columns with Graphics spanning both. Saved-format and name fields stack; formatting options and required-field checkboxes use two columns. Each CSV column editor places its heading above its source selector, with vertical reorder/remove controls beside them. The heading, tabs, and footer stay outside the content scroll.
+
 ## Elevation & Depth
 
-The workspace is mostly flat: white panels, tonal differences, and thin rules establish structure. The receipt sheet lifts slightly from the image stage. The native export dialog has a stronger shadow and a tinted backdrop to establish modal focus. The selected queue row uses an inset outline rather than elevation.
+The workspace is mostly flat: white panels, tonal differences, and thin rules establish structure. The receipt sheet lifts slightly from the image stage. Native export and workspace-settings dialogs share a stronger shadow and tinted backdrop to establish modal focus. The selected queue row uses an inset outline rather than elevation.
 
 - **Receipt sheet:** `0 5px 20px #1e352719` separates paper from the image stage.
-- **Export dialog:** `0 12px 80px #192e2555` separates preview from the workspace.
+- **Modal dialogs:** `0 12px 80px #192e2555` separates preview and settings from the workspace.
 - **Selected row:** `inset 0 0 0 1px #bed4c6` reinforces the selection wash.
 - **Modal backdrop:** `#122c2466` dims the workspace beneath the native dialog.
 
 ## Shapes
 
-Corners are gently curved: fields and notices use the field radius, buttons use the button radius, the connected workspace ends use the workspace radius, and the export dialog uses the dialog radius. Interior panels share straight dividing rules. Small circular status dots and checkboxes remain subordinate to the receipt name and written status.
+Corners are gently curved: fields and notices use the field radius, buttons use the button radius, the connected workspace ends use the workspace radius, and native dialogs use the dialog radius. Interior panels share straight dividing rules. Small circular status dots, checkboxes, and native profile radios remain subordinate to written labels. Profile radios stay compact (16px square), outside the full-width text-input treatment.
 
 ## Components
 
@@ -193,7 +199,7 @@ Inputs use white paper, a strong rule, the field radius, a 37px minimum height, 
 
 ### Line cards and photos
 
-Line items sit in lightly rounded, outlined fieldsets with a muted legend showing the line position and stable Item number after saving. Description and the optional Photo of item purchased span the full width; compact value fields use 32px minimum heights. Total stays beside the Line items heading. A possible implicit discount appears in an evergreen-wash notice with an explicit confirmation action before Amount and Unit price are adjusted.
+Line items sit in lightly rounded, outlined fieldsets with a muted legend showing the line position and stable Item number after saving. Description and the optional Photo of item purchased span the full width; compact value fields use 32px minimum heights. Total stays beside the Line items heading with a compact 100px input on desktop and phones. A possible implicit discount appears in an evergreen-wash notice with an explicit confirmation action before Amount and Unit price are adjusted.
 
 Receipt photo and item-photo controls accept user-uploaded JPEG or PNG images. A dashed Add photo or Replace photo control sits beside an original-attachment label or a 48px square thumbnail, with a quiet Remove photo action for uploaded images. Keyboard focus outlines the upload control. Images are evidence supplied by users, not decorative assets.
 
@@ -201,9 +207,21 @@ Receipt photo and item-photo controls accept user-uploaded JPEG or PNG images. A
 
 Receipt rows combine a number or export checkbox, supplier, filename, written status, and chevron. The active row has an evergreen wash and inset outline; hover has a soft wash. Names and filenames truncate within their row. Processing uses a small spinner, verified uses a check, and other states use a status dot beside text. These are inline labels, not filled pill chips.
 
+Status and reviewer selectors plus a Review priority first checkbox sit above the register. Assigned reviewer and Needs second review appear as supporting text within affected rows, using the same compact hierarchy.
+
 ### Receipt evidence viewer
 
 The image stage holds a white receipt sheet and its subtle shadow. A compact toolbar selects source or enhanced image, changes zoom, and rotates for another OCR pass; page controls sit below the image. Focusing an extracted field can highlight matching OCR regions with translucent yellow rectangles. Recognized text is a disclosure containing selectable regions and explicitly labeled OCR scores.
+
+### Local vision and saved examples
+
+Read with local vision keeps its model selector and page/region actions near the evidence. A selected region uses a translucent evergreen fill and evergreen outline, distinct from yellow OCR evidence. The current receipt's vision job has a written status row, a spinner and Cancel vision while active, and an error message when failed. Changing receipts must show that receipt's current job state.
+
+An open Vision suggestion disclosure shows model and elapsed time, then ruled comparisons of current and suggested values with tabular numbers. It shows eight differences initially, with further changes in a nested disclosure. Apply vision suggestion is an explicit evergreen action; applying returns the values to human review. A warm stale-revision notice explains why an earlier suggestion cannot be applied.
+
+Similar saved receipts is an optional disclosure with an explicit search action, loading feedback, and an empty state. Each result shows its verified revision, similarity value, citation, and Open source receipt action; similarity is labeled as a wording rank rather than extraction accuracy. Use Vendor and Use item wording are deliberate actions. Item wording maps a chosen saved item to a chosen current line; historical prices are never copied. The verification form has a separate opt-in checkbox for using the current verified receipt and its corrections in future local suggestions.
+
+Review assignment is a separate disclosure with an optional Assigned reviewer field, Needs a second review checkbox, and Save assignment action. It uses ordinary fields and a text success message rather than a new status-card treatment.
 
 ### Verification and saving
 
@@ -214,6 +232,18 @@ Save state appears beside the receipt-details heading with a small icon and live
 An outlined Import CSV + photos action sits beside the primary Upload receipts action. Short helper text explains selecting one CSV with referenced photos or one ZIP containing both. The preview offers Download CSV and Download CSV + photos actions; the latter packages the images in a ZIP.
 
 The native modal is limited to 1000px or the viewport minus 32px, with an 85vh maximum height. A scrollable table has sticky headings, compact tabular text, and a note that receipt totals repeat per item row. Download failures appear as an alert **inside the open dialog**, directly below its heading, keeping the message visible with the retry action. The preview stays open after a failed download.
+
+The export footer includes a labeled CSV format selector. The selected format's name appears in the preview alongside receipt and row counts.
+
+### Workspace settings
+
+The native Workspace settings dialog uses a persistent title, close control, Local models / CSV formats / Backups tabs, and Done footer. The selected tab uses deep evergreen text and an evergreen underline. Tabs support arrow keys, Home, and End; focus remains visibly outlined. Errors appear inside the open dialog and success uses the existing evergreen-wash notice.
+
+Local models presents detected hardware in a mineral inset, then ruled OCR only, 2B vision, and 4B vision radio rows. Selection adds evergreen wash; a written recommendation, approximate download size, and required free space support the choice. Downloads begin only through Install selected profile. Checking, installing, complete, failed, and interrupted states use text, a working indicator, and download progress where available; installed OCR, vision, and runtime are separate facts. Workspace location uses a path field, restart explanation, explicit confirmation checkbox, staging action, and staged success state.
+
+CSV formats uses labeled saved-format and name fields, formatting selectors, ruled column editors with compact reorder/remove buttons, required-field checkboxes, and a save row. It supports field sources and literal text, one row per item or receipt, separators, text encoding, date format, and decimal separator. The default's edits save as a copy; custom formats show their version and offer Save a copy or Save changes. Loading, empty, saving, error, and saved feedback stay within this panel.
+
+Backups uses a ruled local ZIP list with filename, date, size, and Download action, plus Reload and Create backup. Loading and empty states use restrained text. Restore a backup pairs a native ZIP file control with an explicit replacement confirmation checkbox and Validate and stage restore action. Validation, errors, and the staged restart message remain in the dialog; the text explains that replacement happens on restart and the previous workspace is retained. Long filenames wrap, and controls remain in the content scroll on phones.
 
 ### Motion
 
@@ -227,6 +257,10 @@ Motion is limited to a 1.5-second linear spinner for active work. Reduced-motion
 - **Do** pair status colors with written labels and icons or dots.
 - **Do** use the shared mineral ink at full opacity for input and textarea placeholders.
 - **Do** display download errors inside the CSV dialog while keeping its retry action available.
+- **Do** keep suggestions beside source evidence, show their current job state, and require an explicit apply action.
+- **Do** show saved-example citations and the opt-in wording beside their actions.
+- **Do** keep profile radios compact and Total constrained beside the line-item heading.
+- **Do** keep settings errors and staged recovery feedback inside the open native dialog.
 - **Do** preserve tabular numbers, persistent field labels, and visible keyboard focus.
 - **Do** honor reduced-motion preferences for working indicators.
 
@@ -236,3 +270,5 @@ Motion is limited to a 1.5-second linear spinner for active work. Reduced-motion
 - **Don't** replace the connected workspace panels with independently elevated cards.
 - **Don't** show a failed download only behind the modal backdrop.
 - **Don't** communicate unread, reading, failed, or verified state through color alone.
+- **Don't** present a vision suggestion as a verified receipt or similarity as extraction accuracy.
+- **Don't** copy historical prices into a current receipt through saved examples.
