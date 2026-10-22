@@ -11,9 +11,9 @@ import ReceiptAssistance from './ReceiptAssistance'
 
 type Props = { id: string; saveBeforeLeave: MutableRefObject<(() => Promise<void>) | null>;
   onChanged: () => void; onError: (error: string) => void; onNext: () => void;
-  onOpenReceipt: (id: string) => void; onSplit: (batchId: string) => void }
+  onOpenReceipt: (id: string) => void; onSplit: (batchId: string) => void; onDeleted: () => void }
 
-export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext, onOpenReceipt, onSplit }: Props) {
+export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext, onOpenReceipt, onSplit, onDeleted }: Props) {
   const [receipt, setReceipt] = useState<Receipt | null>(null)
   const [draft, setDraft] = useState<ReceiptData | null>(null)
   const draftRef = useRef<ReceiptData | null>(null)
@@ -219,6 +219,18 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
     finally { setBusy(false) }
   }
 
+  async function deleteReceipt() {
+    if (!window.confirm(`Delete "${receipt?.original_name}" and its saved fields and photos? This cannot be undone.`)) return
+    setBusy(true)
+    try {
+      await saveBeforeLeave.current?.()
+      await api('/receipts/' + id, { method: 'DELETE' })
+      saveBeforeLeave.current = null
+      onDeleted()
+    } catch (e) { onError((e as Error).message) }
+    finally { setBusy(false) }
+  }
+
   if (!receipt || !draft) return <div className="review-placeholder"><LoaderCircle size={24} className="spin" /><p>Opening receipt…</p></div>
   const warnings = receipt.issues.filter(issue => !issue.blocking)
   const highlighted = receipt.evidence.lines.filter(line => highlight.includes(line.id) && line.page === page)
@@ -236,9 +248,11 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
         <button className="icon-button" aria-label="Zoom out" disabled={zoom <= 50} onClick={() => setZoom(zoom - 25)}><ZoomOut size={16} /></button>
         <span>{zoom}%</span>
         <button className="icon-button" aria-label="Zoom in" disabled={zoom >= 250} onClick={() => setZoom(zoom + 25)}><ZoomIn size={16} /></button>
-        <button className="icon-button" aria-label="Rotate clockwise and rerun OCR" title="Rotate 90° and reread; edits are preserved"
+        <button aria-label="Rotate clockwise and rerun OCR" title="Rotate 90° and reread; edits are preserved"
           disabled={pending || busy || photosBusy || (receipt.original_mime === 'text/csv' && !replacement)}
-          onClick={() => void rotateAndRead()}><RotateCw size={16} /></button>
+          onClick={() => void rotateAndRead()}><RotateCw size={16} /> Rotate</button>
+        <button aria-label="Delete receipt" title={pending ? 'Wait for processing to finish before deleting' : 'Delete this receipt'}
+          disabled={pending || busy || photosBusy} onClick={() => void deleteReceipt()}><Trash2 size={16} /> Delete</button>
       </div>
       <div className="image-stage">
         {image ? <div className="receipt-image" style={{ width: zoom + '%' }}>

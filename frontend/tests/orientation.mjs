@@ -41,6 +41,19 @@ try {
   assert.deepEqual(await dimensions(), after, 'Reload must preserve displayed orientation')
   // Dimensions alone cannot detect a 180-degree flip or mirrored image.
   assert.deepEqual(await imageHash(), savedPixels, 'Reload must preserve the exact displayed pixels')
+  page.once('dialog', dialog => dialog.dismiss())
+  await page.getByRole('button', { name: 'Delete receipt', exact: true }).click()
+  assert.equal(await page.locator(`[data-receipt-id="${receiptId}"]`).count(), 1, 'Cancel must keep the receipt')
+  page.once('dialog', dialog => dialog.accept())
+  const deleted = page.waitForResponse(response => response.request().method() === 'DELETE'
+    && new URL(response.url()).pathname === `/api/v1/receipts/${receiptId}`)
+  await page.getByRole('button', { name: 'Delete receipt', exact: true }).click()
+  assert.equal((await deleted).status(), 200)
+  await page.locator(`[data-receipt-id="${receiptId}"]`).waitFor({ state: 'detached' })
+  await page.reload()
+  await page.getByRole('heading', { name: 'Add expense', exact: true }).waitFor()
+  assert.equal(await page.locator(`[data-receipt-id="${receiptId}"]`).count(), 0, 'Deleted receipt must stay removed')
+  console.log('PASS: delete cancellation preserves receipt; confirmed deletion survives reload')
   console.log('PASS: rotation appears immediately after processing and stays unchanged on reload')
 } finally {
   await browser.close()

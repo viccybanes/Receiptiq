@@ -336,6 +336,12 @@ export default function App() {
         </aside>
         {selected ? <Review key={selected} id={selected} saveBeforeLeave={saveBeforeLeave}
           onChanged={() => void refresh()} onError={setError}
+          onDeleted={() => {
+            setReceipts(current => current.filter(receipt => receipt.id !== selected))
+            setExportIds(current => { const next = new Set(current); next.delete(selected); return next })
+            setSelected('')
+            void refresh()
+          }}
           onOpenReceipt={id => void chooseReceipt(id)}
             onSplit={id => { setSelected(''); setBatchId(id); setSelectedDay(localDay(new Date().toISOString())); setExportIds(new Set()) }}
           onNext={() => {

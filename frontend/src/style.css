@@ -87,7 +87,7 @@ summary { cursor: pointer; font-weight: 600; }
 .queue-empty { padding: 16px; color: var(--muted); font-size: 12px; }
 .image-panel { min-width: 0; border-right: 1px solid var(--line); background: #e9ede8; }
 .image-panel > .panel-title { background: var(--paper); }
-.image-toolbar { display: flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 12px; border-bottom: 1px solid #d8dfd6; font-size: 11px; }
+.image-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 7px; padding: 9px 12px; border-bottom: 1px solid #d8dfd6; font-size: 11px; }
 .image-toolbar select { margin-right: auto; font-size: 11px; background: transparent; border-color: transparent; padding-left: 0; }
 .image-toolbar span { width: 34px; text-align: center; font-variant-numeric: tabular-nums; }
 .image-stage { height: min(650px, 65vh); min-height: 380px; overflow: auto; padding: 28px 24px; display: flex; align-items: flex-start; justify-content: flex-start; }
