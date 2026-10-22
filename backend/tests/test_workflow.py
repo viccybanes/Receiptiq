@@ -362,7 +362,7 @@ def test_upload_auto_vision_is_serial_and_preserves_edits(client, monkeypatch, i
         assert first['data']['supplier'] == 'HUMAN VENDOR'
         assert not first['candidate'].get('auto_applied')
     elif intervention == 'failure':
-        assert first['vision_job']['state'] == 'failed'
+        assert first['vision_job']['state'] == 'queued'
         assert first['data']['supplier'] == ''
     else:
         assert first['data']['supplier'] == 'VISION VENDOR'
@@ -372,4 +372,61 @@ def test_upload_auto_vision_is_serial_and_preserves_edits(client, monkeypatch, i
     assert client.worker.process_one()  # Second vision, even after first failed.
     assert client.store.receipt(second_id)['data']['supplier'] == 'VISION VENDOR'
     assert calls == ['qwen3-vl:4b-instruct', 'qwen3-vl:4b-instruct']
+    if intervention == 'failure':
+        assert client.worker.process_one()
+        assert client.store.receipt(first_id)['data']['supplier'] == 'VISION VENDOR'
+    assert not client.worker.process_one()
+
+
+def test_vision_retries_wait_for_queue_and_stop_after_three_attempts(client, monkeypatch):
+    from collections import Counter
+
+    from app.worker import Worker
+
+    calls = []
+    counts = Counter()
+    group = batch(client, 3)
+    ids = [upload(client, group, i, auto_ocr=False).json()['id'] for i in range(3)]
+
+    def extract(images, lines, **options):
+        receipt_id = images[0].parent.name
+        calls.append(receipt_id)
+        counts[receipt_id] += 1
+        if receipt_id != ids[2]:
+            raise RuntimeError('Temporary inference failure')
+        return {'draft': options['current'], 'model': options['model'], 'seconds': 0}
+
+    def configure(worker):
+        monkeypatch.setattr(worker.vision, 'extract', extract)
+        monkeypatch.setattr(worker.retrieval, 'search', lambda *args: [])
+        return worker
+
+    worker = configure(client.worker)
+    for _ in range(6):
+        assert worker.process_one()  # Three previews and their initial vision attempts.
+    assert calls == ids
+    # A fresh worker must retain retry attempts/order using only persisted jobs.
+    worker = configure(Worker(client.store, engine=Engine()))
+    for _ in range(4):
+        assert worker.process_one()
+    assert calls == ids + ids[:2] + ids[:2]
+    assert counts[ids[0]] == counts[ids[1]] == 3
+    assert not worker.process_one()
+    for receipt_id in ids[:2]:
+        job = client.store.receipt(receipt_id)['vision_job']
+        assert job['state'] == 'failed'
+        assert 'retry manually' in job['stage']
+
+
+def test_cancelled_deferred_vision_is_not_retried(client, monkeypatch):
+    def fail(*args, **kwargs):
+        raise RuntimeError('Unavailable')
+    monkeypatch.setattr(client.worker.vision, 'extract', fail)
+    monkeypatch.setattr(client.worker.retrieval, 'search', lambda *args: [])
+    receipt_id = upload(client, batch(client), auto_ocr=False).json()['id']
+    assert client.worker.process_one()
+    assert client.worker.process_one()
+    job = client.store.receipt(receipt_id)['vision_job']
+    assert job['state'] == 'queued'
+    assert client.post('/api/v1/jobs/' + job['id'] + '/cancel').status_code == 200
     assert not client.worker.process_one()

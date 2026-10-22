@@ -14,6 +14,7 @@ from .retrieval import Retrieval
 from .vision import ALLOWED_MODELS, DEFAULT_MODEL, VisionEngine
 
 logger = logging.getLogger(__name__)
+MAX_VISION_ATTEMPTS = 3
 
 
 class Worker:
@@ -48,7 +49,9 @@ class Worker:
         with self.store.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             job = connection.execute("SELECT * FROM jobs WHERE state='queued' ORDER BY "
-                                     "CASE kind WHEN 'vision' THEN 0 WHEN 'index' THEN 1 ELSE 2 END,created_at "
+                                     "CASE WHEN kind='vision' AND attempts>0 THEN 3 "
+                                     "WHEN kind='vision' THEN 0 WHEN kind='index' THEN 1 ELSE 2 END,"
+                                     "attempts,CASE WHEN kind='vision' AND attempts>0 THEN updated_at ELSE created_at END,rowid "
                                      "LIMIT 1").fetchone()
             if not job:
                 return False
@@ -71,8 +74,12 @@ class Worker:
             logger.exception("Receipt processing failed for job %s", job["id"])
             message = str(exc)[:1000] or "OCR failed. Open the receipt for manual entry or retry."
             with self.store.connect() as connection:
-                connection.execute("UPDATE jobs SET state='failed',stage='Processing failed',error=?,updated_at=? "
-                                   "WHERE id=? AND state='processing'", (message, now(), job["id"]))
+                retry = job["kind"] == "vision" and job["attempts"] + 1 < MAX_VISION_ATTEMPTS
+                stage = (f"Vision failed; retry {job['attempts'] + 1}/{MAX_VISION_ATTEMPTS - 1} after queue finishes"
+                         if retry else "Processing failed; retry manually")
+                connection.execute("UPDATE jobs SET state=?,stage=?,error=?,updated_at=? "
+                                   "WHERE id=? AND state='processing'",
+                                   ("queued" if retry else "failed", stage, message, now(), job["id"]))
                 if job["kind"] in ("ocr", "preview"):
                     connection.execute("UPDATE receipts SET status='failed',error=?,updated_at=? "
                                        "WHERE id=? AND status='processing'", (message, now(), job["receipt_id"]))

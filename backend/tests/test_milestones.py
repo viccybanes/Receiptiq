@@ -149,6 +149,9 @@ def test_failed_vision_keeps_verified_manual_export(client, monkeypatch):
 
     monkeypatch.setattr(client.worker.vision, "extract", unavailable)
     job_id = queue_vision(client, receipt)
+    for _ in range(2):
+        assert client.worker.process_one()
+        assert client.get("/api/v1/jobs/" + job_id).json()["state"] == "queued"
     assert client.worker.process_one()
     assert client.get("/api/v1/jobs/" + job_id).json()["state"] == "failed"
     current = client.store.receipt(receipt["id"])
