@@ -30,6 +30,7 @@ export default function App() {
   const [templateId, setTemplateId] = useState('default')
   const [error, setError] = useState('')
   const [uploading, setUploading] = useState(false)
+  const [pendingUploads, setPendingUploads] = useState<{ id: number; name: string }[]>([])
   const [uploadProgress, setUploadProgress] = useState({ done: 0, total: 0 })
   const [exportIds, setExportIds] = useState<Set<string>>(new Set())
   const [preview, setPreview] = useState<{ columns: string[]; rows: Record<string, string>[]; row_count: number; template: Template } | null>(null)
@@ -123,6 +124,7 @@ export default function App() {
     setUploading(true)
     setError('')
     setUploadProgress({ done: 0, total: files.length })
+    setPendingUploads(files.map((file, id) => ({ id, name: file.name })))
     try {
       await saveBeforeLeave.current?.()
       const previous = resumeBatch.current
@@ -131,24 +133,25 @@ export default function App() {
         await post<Batch>('/batches', { name: new Date().toLocaleString(undefined,
           { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }), files: files.map(f => f.name) })
       setBatchId(batch.id)
-      setSelectedDay(localDay(batch.created_at || new Date().toISOString()))
-      setSelected('')
+
       const entries = [...(batch.files || [])]
-      const work = files.map(file => {
+      const work = files.map((file, indexInUpload) => {
         const index = entries.findIndex(entry => entry.name === file.name && entry.state !== 'accepted' && entry.state !== 'deleted')
-        return { file, entry: index >= 0 ? entries.splice(index, 1)[0] : null }
+        return { file, indexInUpload, entry: index >= 0 ? entries.splice(index, 1)[0] : null }
       })
       let cursor = 0
       let failures = 0
       async function transfer() {
         while (cursor < work.length) {
-          const { file, entry } = work[cursor++]
+          const { file, entry, indexInUpload } = work[cursor++]
           try {
             if (!entry) throw new Error('File is not an unfinished entry in this batch.')
             const form = new FormData()
             form.append('file', file)
             await api('/receipts?batch_id=' + batch.id + '&upload_id=' + entry.id, { method: 'POST', body: form })
           } catch { failures++ }
+          setPendingUploads(current => current.filter(entry => entry.id !== indexInUpload))
+          await refresh().catch(() => {})
           setUploadProgress(current => ({ ...current, done: current.done + 1 }))
         }
       }
@@ -158,6 +161,7 @@ export default function App() {
     } catch (e) { setError((e as Error).message) }
     finally {
       setUploading(false)
+      setPendingUploads([])
       if (input.current) input.current.value = ''
       await refresh().catch(() => {})
     }
@@ -307,6 +311,10 @@ export default function App() {
             </select>
             <label className="priority-filter"><input type="checkbox" checked={priority} onChange={e => setPriority(e.target.checked)} /> Review priority first</label>
             <div className="queue-list">
+              {pendingUploads.map(file => <div className="queue-row" key={'upload-' + file.id} role="status">
+                <LoaderCircle size={18} className="spin" /><div className="receipt-select">
+                  <span className="receipt-name">{file.name}</span><span className="receipt-file">Uploading...</span>
+                </div></div>)}
               {visible.map((receipt, index) => {
                 const data = JSON.parse(receipt.data_json) as { supplier: string; total: string; currency: string }
                 return <div key={receipt.id} className={'queue-row ' + (selected === receipt.id ? 'active' : '')}>

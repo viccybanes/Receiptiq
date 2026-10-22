@@ -176,7 +176,7 @@ class Worker:
             connection.execute("DELETE FROM document_pages WHERE receipt_id=? AND page_number>=?",
                                (receipt["id"], page_count))
             connection.execute("INSERT INTO extraction_runs VALUES(?,?,?,?,?)",
-                               (uid(), receipt["id"], "CSV preview" if preview_only else "PaddleOCR 3.0.3 / CPU",
+                               (uid(), receipt["id"], "Image preview" if preview_only else "PaddleOCR 3.0.3 / CPU",
                                 json.dumps(result), now()))
             # Any human edit wins. Reprocessing still records evidence and an alternative draft.
             if not current["manually_edited"]:

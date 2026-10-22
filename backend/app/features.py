@@ -251,9 +251,9 @@ def install_routes(app, store, worker):
                                        "created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
                                        (new_receipt, new_document, batch_id, upload_id, "queued",
                                         json.dumps(blank_data()), now(), now()))
-                    connection.execute("INSERT INTO jobs(id,receipt_id,batch_id,state,stage,created_at,updated_at) "
-                                       "VALUES(?,?,?,?,?,?,?)", (uid(), new_receipt, batch_id, "queued",
-                                                                "Waiting for OCR", now(), now()))
+                    connection.execute("INSERT INTO jobs(id,receipt_id,batch_id,state,stage,created_at,updated_at,kind) "
+                                       "VALUES(?,?,?,?,?,?,?,?)", (uid(), new_receipt, batch_id, "queued",
+                                                                  "Preparing preview", now(), now(), "preview"))
                     receipt_ids.append(new_receipt)
                 connection.execute("UPDATE receipts SET status='split',verified_revision=NULL,retrieval_allowed=0 "
                                    "WHERE id=?", (receipt_id,))

@@ -184,7 +184,7 @@ def create_app(root=None, *, start_worker=True, engine=None):
         return result
 
     @app.post("/api/v1/receipts", status_code=202)
-    async def upload(batch_id: str, upload_id: str, file: UploadFile = File(...)):
+    async def upload(batch_id: str, upload_id: str, file: UploadFile = File(...), auto_ocr: bool = False):
         async with upload_lock:
             entry = store.one("SELECT * FROM batch_files WHERE id=? AND batch_id=?", (upload_id, batch_id))
             if not entry:
@@ -226,9 +226,10 @@ def create_app(root=None, *, start_worker=True, engine=None):
                                        "created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
                                        (receipt_id, document_id, batch_id, upload_id, "queued",
                                         json.dumps(blank_data()), now(), now()))
-                    connection.execute("INSERT INTO jobs(id,receipt_id,batch_id,state,stage,created_at,updated_at) "
-                                       "VALUES(?,?,?,?,?,?,?)",
-                                       (job_id, receipt_id, batch_id, "queued", "Waiting for OCR", now(), now()))
+                    connection.execute("INSERT INTO jobs(id,receipt_id,batch_id,state,stage,created_at,updated_at,kind) "
+                                       "VALUES(?,?,?,?,?,?,?,?)",
+                                       (job_id, receipt_id, batch_id, "queued", "Preparing preview", now(), now(),
+                                        "ocr" if auto_ocr else "preview"))
                     connection.execute("UPDATE batch_files SET state='accepted',receipt_id=?,error=NULL WHERE id=?",
                                        (receipt_id, upload_id))
                 return {"id": receipt_id, "document_id": document_id, "job_id": job_id, "accepted": True}

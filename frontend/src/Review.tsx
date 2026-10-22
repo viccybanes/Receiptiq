@@ -6,7 +6,7 @@ import { ApiError, api, download, post } from './api'
 import { displayDate, inputDate } from './purchaseDate'
 import type { Receipt, ReceiptData } from './types'
 import PhotoField from './PhotoField'
-import { amount } from './amount'
+import { completeAmounts } from './amount'
 import ReceiptAssistance from './ReceiptAssistance'
 
 type Props = { id: string; saveBeforeLeave: MutableRefObject<(() => Promise<void>) | null>;
@@ -55,8 +55,9 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
   const load = useCallback(async () => {
     const result = await api<Receipt>('/receipts/' + id)
     setReceipt(result)
-    setDraft(result.data)
-    draftRef.current = result.data
+    const completed = result.status === 'verified' ? result.data : completeAmounts(result.data)
+    setDraft(completed)
+    draftRef.current = completed
     saved.current = JSON.stringify(result.data)
     revision.current = result.revision
     setAllowRetrieval(!!result.retrieval_allowed)
@@ -128,8 +129,9 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
         if (revision.current !== expected || saving.current || JSON.stringify(draftRef.current) !== saved.current) return
         if (result.revision !== revision.current) { setAcknowledged(new Set()); setReason('') }
         setReceipt(result)
-        setDraft(result.data)
-        draftRef.current = result.data
+        const completed = completeAmounts(result.data)
+        setDraft(completed)
+        draftRef.current = completed
         saved.current = JSON.stringify(result.data)
         revision.current = result.revision
       }).catch((e: Error) => onError(e.message))
@@ -181,6 +183,7 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
   }, [id, currentPage?.id, variant, receipt?.rotation, replacement, directPhoto, pending]) // eslint-disable-line
 
   function change(next: ReceiptData) {
+    next = completeAmounts(next, draftRef.current || undefined)
     if (draftRef.current) {
       undo.current.push(structuredClone(draftRef.current))
       if (undo.current.length > 50) undo.current.shift()
@@ -307,6 +310,15 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
       <div className="page-bar"><button aria-label="Previous page" disabled={page === 0} onClick={() => setPage(page - 1)}><ChevronLeft size={15} /></button>
         <span>Page {receipt.pages.length ? page + 1 : 0} of {receipt.pages.length}</span>
         <button aria-label="Next page" disabled={page + 1 >= receipt.pages.length} onClick={() => setPage(page + 1)}><ChevronRight size={15} /></button></div>
+      <button disabled={pending || busy || photosBusy} onClick={async () => {
+        setBusy(true)
+        try {
+          await saveBeforeLeave.current?.()
+          await post('/receipts/' + id + '/process', { rotation: receipt.rotation })
+          await load(); onChanged()
+        } catch (e) { onError((e as Error).message) }
+        finally { setBusy(false) }
+      }}>Run OCR</button>
       <details className="ocr-evidence"><summary>Recognized text · {receipt.evidence.lines.length} regions</summary>
         <p>OCR scores describe recognition, not verified accuracy. Select a region to inspect its source.</p>
         {receipt.evidence.lines.map(line => <button key={line.id} className="ocr-line" onClick={() => {
@@ -341,7 +353,7 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
         saveDraft={async () => { await saveBeforeLeave.current?.() }}
         onReceipt={result => { setReceipt(result); onChanged() }}
         onApplied={result => {
-          setReceipt(result); setDraft(result.data); draftRef.current = result.data
+          setReceipt(result); const completed = completeAmounts(result.data); setDraft(completed); draftRef.current = completed
           revision.current = result.revision; saved.current = JSON.stringify(result.data)
           setSaveState('Saved locally'); setAcknowledged(new Set()); setReason(''); onChanged()
         }} onChange={change} onBusy={setBusy} onError={onError} onOpenReceipt={onOpenReceipt} />
@@ -351,7 +363,7 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
         {saveState === 'Saved locally' ? <Check size={13} /> : <Save size={13} />}{saveState}</span></div>
       <div className="review-intro"><span className={'review-state ' + (receipt.status === 'verified' ? 'is-verified' : '')}>
         {receipt.status === 'verified' ? <ShieldCheck size={16} /> : <FileImage size={16} />}
-        {receipt.status === 'verified' ? 'Verified by a person' : pending ? 'OCR is running' : 'Ready for your review'}</span>
+        {receipt.status === 'verified' ? 'Verified by a person' : pending ? 'Preparing receipt' : 'Ready for your review'}</span>
         <p>{receipt.status === 'verified' ? 'Editing these fields requires verification again.' :
           'Compare each field with the receipt. Select a field to see its source.'}</p></div>
       {receipt.error && <div className="notice warning">{receipt.error} You can enter the values manually.</div>}
@@ -385,18 +397,15 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
           const issue = receipt.issues.find(issue => issue.field === key)
           return <label key={key} className="field">
             <span>{label}</span>
-            <input value={key === 'receipt_date' ? displayDate(draft[key]) : draft[key]} maxLength={key === 'receipt_date' ? 8 : 500} data-field={key}
+            <input value={key === 'receipt_date' ? displayDate(draft[key]) : draft[key]} maxLength={key === 'receipt_date' ? 10 : 500} data-field={key}
               type="text"
-              placeholder={key === 'receipt_date' ? 'MM/DD/YY' : key === 'receipt_number' ? 'Vendor reference — leave blank if none' : ''}
+              placeholder={key === 'receipt_date' ? 'MM/DD/YYYY' : key === 'receipt_number' ? 'Vendor reference — leave blank if none' : ''}
               onFocus={() => focus(key)} aria-invalid={!!issue?.blocking}
               onChange={e => change({ ...draft, [key]: key === 'receipt_date' ? inputDate(e.target.value) : e.target.value })} />
-            {key === 'receipt_date' && <small>MM/DD/YY · Two-digit years mean 2000–2099.</small>}
+            {key === 'receipt_date' && <small>MM/DD/YYYY</small>}
             {issue?.blocking && <small className="field-error">{issue.message}</small>}
           </label>
         })}
-          <PhotoField receiptId={id} photoId={draft.receipt_photo_id} label="Receipt photo"
-            original={receipt.original_mime !== 'text/csv'} onBusy={photoBusy} onError={onError}
-            onChange={photoId => change({ ...draftRef.current!, receipt_photo_id: photoId })} />
           <label className="field full-width"><span>Notes</span><textarea value={draft.notes} maxLength={4000}
             placeholder="Anything worth remembering about this receipt"
             onChange={e => change({ ...draft, notes: e.target.value })} /></label>
@@ -419,7 +428,6 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
               onFocus={() => focus('items.' + index + '.' + key)}
               onChange={e => {
                 const next = { ...item, [key]: e.target.value }
-                if (key === 'quantity' || key === 'unit_price') next.line_total = amount(next.quantity, next.unit_price) || ''
                 change({ ...draft, items: draft.items.map((value, i) => i === index ? next : value) })
               }} /></label>)}
           <PhotoField receiptId={id} photoId={item.photo_id} label="Photo of item purchased" onBusy={photoBusy} onError={onError}

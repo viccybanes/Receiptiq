@@ -47,8 +47,8 @@ def batch(client, count=1):
     return response.json()
 
 
-def upload(client, group, index=0, content=None):
-    response = client.post("/api/v1/receipts", params={"batch_id": group["id"], "upload_id": group["files"][index]["id"]},
+def upload(client, group, index=0, content=None, auto_ocr=True):
+    response = client.post("/api/v1/receipts", params={"batch_id": group["id"], "upload_id": group["files"][index]["id"], "auto_ocr": auto_ocr},
                            files={"file": ("receipt.png", image_bytes() if content is None else content, "image/png")})
     return response
 
@@ -293,3 +293,22 @@ def test_failed_ocr_can_be_verified_manually_and_is_not_retried(client):
     assert verify(client, result.json()).status_code == 200
     client.post("/api/v1/batches/" + group["id"] + "/retry-failed")
     assert not client.worker.process_one()
+
+
+def test_upload_preview_then_explicit_ocr(client):
+    group = batch(client)
+    result = client.post('/api/v1/receipts', params={
+        'batch_id': group['id'], 'upload_id': group['files'][0]['id']},
+        files={'file': ('receipt.png', image_bytes(), 'image/png')})
+    assert result.status_code == 202
+    receipt_id = result.json()['id']
+    assert client.worker.process_one()
+    receipt = client.get('/api/v1/receipts/' + receipt_id).json()
+    assert receipt['pages']
+    assert receipt['data']['supplier'] == ''
+    assert receipt['evidence']['lines'] == []
+    assert client.post('/api/v1/receipts/' + receipt_id + '/process', json={'rotation': 0}).status_code == 202
+    assert client.worker.process_one()
+    receipt = client.get('/api/v1/receipts/' + receipt_id).json()
+    assert receipt['data']['supplier'] == 'NORTHSIDE MARKET'
+    assert receipt['evidence']['lines']

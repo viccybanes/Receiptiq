@@ -29,8 +29,7 @@ Development launch and installed desktop use the same backend and workspace form
 
 ## Process a batch
 
-Purchase date is displayed and entered as **MM/DD/YY** (two-digit years mean
-2000–2099). Stored dates remain ISO for sorting and existing CSV templates.
+Purchase date is displayed and entered as **MM/DD/YYYY**. Stored dates remain ISO for sorting and existing CSV templates.
 OCR and vision normalize clear numeric dates such as `8/27/26` or `27/8/2026`;
 ambiguous readings such as `08/09/26` need review rather than a guessed month/day.
 Vision dates appear in the suggestion first and fill the form when it is applied.
@@ -51,7 +50,7 @@ changes guide the local model; they do not train its weights or establish accura
 on real handwriting. Correct, verify, and opt in receipts to improve references.
 
 1. Choose or drop tens of JPG/PNG images. PDFs are supported. Each image represents one receipt; a PDF represents one receipt across its pages.
-2. Files transfer individually into durable queued jobs. One OCR task runs at a time. Review completed receipts while the rest process.
+2. Files transfer individually into durable preview jobs while the current review stays open. Use vision or Run OCR explicitly when needed. One processing task runs at a time.
 3. Select a receipt. Compare the image and fields, inspect recognized text, and correct values. Fields autosave; failed saves retain the draft in the page. Resolve conflicts before navigating away.
 4. Enter the reviewer name, correct blocking issues, and acknowledge remaining warnings with a reason. Verify the receipt.
 5. Select verified receipts, preview the CSV, and download. Unfinished/unverified receipts are excluded. Editing verified values removes export eligibility until verified again.
@@ -60,7 +59,7 @@ Batch controls cancel unfinished work or retry failed processing. Failed uploads
 
 Limits: 25 MB per uploaded file, 32 megapixels per image/rendered page, 30 pages per PDF, and 500 files per batch. Tests exercise 50- and 100-image queues. The interface lists up to 500 receipts in a view; use the batch selector for older work.
 
-EXIF rotation and small-angle deskew run automatically. The rotate control rotates 90 degrees and reruns OCR. Reprocessing preserves human edits and stores a separate OCR draft. Selecting a field highlights its source region on the enhanced image; source view and untouched-original download remain available.
+EXIF rotation and small-angle deskew run automatically. The rotate control turns the preview 90 degrees without OCR and remembers the view in this browser. New uploads prepare previews only; use Run OCR when needed. Reprocessing preserves human edits and stores a separate OCR draft. Selecting a field highlights its source region on the enhanced image; source view and untouched-original download remain available.
 
 ## Optional reading and review tools
 
@@ -164,3 +163,5 @@ Evaluators use generated samples and write ignored reports under artifacts. Visi
 Build prerequisites are Windows x64, the development setup above, the Rust MSVC toolchain, and Visual Studio C++ build tools. `build_installer.ps1` builds frontend, freezes the complete Python directory bundle, and invokes pinned Tauri CLI with the Cargo lock. Use `-SkipBackendBuild` only when that bundle already matches current source. The NSIS installer and SHA-256 build manifest are copied to `artifacts/desktop`. Ship the installer, or the entire portable `dist/receiptiq` folder rather than its executable alone.
 
 For Authenticode signing, set `RECEIPTIQ_CERT_THUMBPRINT` to an existing CurrentUser\My certificate with its private key and `RECEIPTIQ_TIMESTAMP_URL` to the issuer's timestamp service. No certificate is generated or imported. Without credentials the build is explicitly unsigned; clean Windows/CPU-only testing and a real handwritten corpus remain release gates. Pinned runtime/model versions and upstream license references are in [runtime-manifest.json](packaging/runtime-manifest.json) and [THIRD_PARTY_NOTICES.md](packaging/THIRD_PARTY_NOTICES.md).
+
+Missing Quantity, Unit price, and Amount are completed when the other two values are available. Calculated amounts and matching totals update during edits; differing written amounts and totals remain for discount review. A missing Total uses the sum only when every line has an Amount. Uploads keep the current review open and show temporary uploading rows.

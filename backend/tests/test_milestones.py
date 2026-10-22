@@ -53,7 +53,7 @@ def ready_pdf(client):
     with Image.new("RGB", (80, 100), "white") as first, Image.new("RGB", (80, 100), "white") as second:
         first.save(stream, "PDF", resolution=72, save_all=True, append_images=[second])
     group = client.post("/api/v1/batches", json={"name": "Two-page source", "files": ["two-pages.pdf"]}).json()
-    accepted = client.post("/api/v1/receipts", params={"batch_id": group["id"], "upload_id": group["files"][0]["id"]},
+    accepted = client.post("/api/v1/receipts", params={"batch_id": group["id"], "upload_id": group["files"][0]["id"], "auto_ocr": True},
                            files={"file": ("two-pages.pdf", stream.getvalue(), "application/pdf")})
     assert accepted.status_code == 202, accepted.text
     assert client.worker.process_one()

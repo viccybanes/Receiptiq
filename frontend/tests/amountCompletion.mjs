@@ -1,0 +1,26 @@
+import assert from 'node:assert/strict'
+import fs from 'node:fs/promises'
+import ts from 'typescript'
+const source = await fs.readFile(new URL('../src/amount.ts', import.meta.url), 'utf8')
+const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.ES2020 } })
+const { completeAmounts } = await import('data:text/javascript;base64,' + Buffer.from(compiled.outputText).toString('base64'))
+const receipt = (quantity, unit_price, line_total, total = '') => ({ total, items: [{ id: 'a', quantity, unit_price, line_total }] })
+let data = completeAmounts(receipt('3', '0.10', ''))
+assert.equal(data.items[0].line_total, '0.30')
+assert.equal(data.total, '0.30')
+assert.equal(completeAmounts(receipt('', '25', '100')).items[0].quantity, '4.000000')
+assert.equal(completeAmounts(receipt('4', '', '100')).items[0].unit_price, '25.00')
+assert.equal(completeAmounts(receipt('', '0', '100')).items[0].quantity, '')
+let changed = structuredClone(data); changed.items[0].quantity = '5'
+changed = completeAmounts(changed, data)
+assert.equal(changed.items[0].line_total, '0.50')
+assert.equal(changed.total, '0.50')
+const discount = completeAmounts(receipt('3', '10', '25', '20'))
+assert.equal(discount.items[0].line_total, '25')
+assert.equal(discount.total, '20')
+assert.equal(completeAmounts(receipt('bad', '2', '')).total, '')
+const amountChange = completeAmounts(receipt('3', '0.10', '1.00', '0.30'), data)
+assert.equal(amountChange.items[0].quantity, '10.000000')
+assert.equal(amountChange.total, '1.00')
+assert.equal(completeAmounts({total: '', items: [{id:'a', quantity:'', unit_price:'', line_total:'10'}, {id:'b', quantity:'', unit_price:'', line_total:''}]}).total, '')
+console.log('PASS: missing arithmetic, live edits, exact cents, zero division, incomplete rows, discounts')
