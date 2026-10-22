@@ -12,4 +12,5 @@
 - End users must not install Python. Models download during explicit setup; normal operation works offline.
 - Keep code simple; reuse existing modules and standard libraries. Test meaningful money, privacy, lifecycle, and migration behavior.
 - Commit meaningful completed slices and push to the configured origin. Never commit user receipts, model caches, credentials, or generated bundles.
+- Use Conventional Commits for every commit: feat, fix, docs, test, refactor, chore, build, ci, or perf; add a scope when useful. Keep subjects concise and imperative.
 - Address the user as bro; assistant name Chae. Keep progress and completion reports concise and honest.
