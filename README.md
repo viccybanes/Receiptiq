@@ -36,6 +36,13 @@ pass, and remains a reviewable suggestion. Handwriting classification and spelli
 are model judgments, not guaranteed rules; check the source before applying.
 Vendor extraction favors the first-page header and skips common receipt titles,
 contact details, and customer labels instead of falling back to a priced item.
+Vision suggestions include brief reading cautions for unclear dates, overwritten
+dimensions, and handwritten interpretations. These stay outside saved Notes and
+CSV fields. Python checks the suggested line arithmetic and Total without filling
+missing prices or allocating a discount. Retrieved verified wording corrections
+are supplied as before/after examples, never as historical numeric facts. These
+changes guide the local model; they do not train its weights or establish accuracy
+on real handwriting. Correct, verify, and opt in receipts to improve references.
 
 1. Choose or drop tens of JPG/PNG images. PDFs are supported. Each image represents one receipt; a PDF represents one receipt across its pages.
 2. Files transfer individually into durable queued jobs. One OCR task runs at a time. Review completed receipts while the rest process.

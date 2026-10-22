@@ -136,6 +136,32 @@ def test_partial_valid_suggestions_preserve_current_fields_item_ids_and_photos(p
     assert result["items"][0] == {**current["items"][0], "line_total": "90.00"}
 
 
+def test_verified_wording_pairs_reach_vision_but_numeric_corrections_do_not(page, runtime):
+    pairs = [{"field": "items.0.description", "before": "PIVUT", "after": "PIVOT"},
+             {"field": "items.0.unit_price", "before": "99125", "after": "99126"},
+             {"field": "notes", "before": "private memo", "after": "private correction"},
+             {"field": "items.0.item_type", "before": "Old category", "after": "New category"}]
+    runtime["engine"].extract([page], [], examples=[{"vendor": "Hardware", "corrections": pairs}])
+    context = json.loads(runtime["request"]["messages"][1]["content"])
+    assert context["historical_examples"][0]["corrections"] == pairs[:1]
+    assert "99125" not in json.dumps(context) and "private memo" not in json.dumps(context)
+
+
+def test_uncertainty_and_exact_arithmetic_are_shown_without_changing_receipt_facts(page, runtime):
+    runtime["result"] = {
+        "total": "5640.00", "receipt_date": "", "notes": "",
+        "reading_notes": ["Line 5: overwritten dimensions unclear.", "Purchase date: year unclear."],
+        "items": [{"description": "Item", "quantity": "1", "unit_price": "", "line_total": amount}
+                  for amount in ("175", "1250", "140", "135", "2400", "1590")]}
+    result = runtime["engine"].extract([page], [])
+    assert "50.00" in result["notice"] and "implicit discount" in result["notice"]
+    assert "overwritten dimensions unclear" in result["notice"]
+    assert result["draft"]["notes"] == "" and result["draft"]["receipt_date"] == ""
+    assert result["draft"]["items"][-1]["unit_price"] == ""
+    assert result["draft"]["items"][-1]["line_total"] == "1590"
+    assert "reading_notes" not in result["draft"]
+
+
 def test_unknown_fields_remain_blank_and_preserved_values_have_no_false_provenance(page, runtime):
     runtime["result"] = {"items": []}
     result = runtime["engine"].extract([page], [])

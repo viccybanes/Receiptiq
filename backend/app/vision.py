@@ -17,7 +17,7 @@ from pathlib import Path
 
 from pydantic import Field, ValidationError
 
-from .extraction import decimal
+from .extraction import decimal, validate
 from .imaging import MAX_PAGES, inspect_file
 from .imaging import pages as image_pages
 from .models import Item, ReceiptData, StrictModel
@@ -64,6 +64,21 @@ without currency symbols or grouping separators. Do not calculate missing prices
 or amounts. Do not extract tax, subtotal, or discount fields. Do not allocate an
 implicit discount: a human must confirm any arithmetic difference. Preserve item
 reading order. For a cropped image, extract only values visible in that region.
+Read the header, then the item table row by row, then the final amount due.
+Use column alignment to distinguish Quantity, Unit cost, and Amount; never move a
+number from a neighboring row into an empty cell. Wrapped descriptions belong to
+the same item unless a separate quantity/amount row is visible. Preserve inch
+marks, dimensions, and model codes only when legible. Do not guess overwritten
+dimensions, an ambiguous year, or a missing unit price even when quantity is one.
+The final amount due takes precedence over tax breakdowns, subtotals, and tender.
+Historical before/after wording corrections are hints, not replacement rules;
+apply them only when the current handwriting and context independently support it.
+Return reading_notes as brief reviewer-facing observations identifying uncertain
+fields or handwritten spelling interpretations (for example, 'Line 1: ambiguous
+handwriting interpreted as PIVOT; check the original'). Do not put these comments
+in receipt notes or descriptions. If part of a description is unreadable, keep its
+legible words and flag the missing part in reading_notes. Return [] if no such
+observations exist. Do not return private reasoning or confidence percentages.
 """
 
 
@@ -89,6 +104,7 @@ class VisionReceipt(StrictModel):
     total: str = Field(default="", max_length=32)
     notes: str = Field(default="", max_length=4000)
     items: list[VisionItem] = Field(default_factory=list, max_length=1000)
+    reading_notes: list[str] = Field(default_factory=list, max_length=12)
 
 
 def _output_schema():
@@ -208,6 +224,18 @@ def _example_context(examples):
         result.append({"supplier": str(data.get("supplier", data.get("vendor", "")))[:500], "items": [
             {key: str(item.get(key, ""))[:500] for key in ("description", "unit", "item_type")}
             for item in (items[:20] if isinstance(items, list) else []) if isinstance(item, dict)]})
+        corrections = data.get("corrections", [])
+        safe_pairs = []
+        for pair in (corrections[:20] if isinstance(corrections, list) else []):
+            if not isinstance(pair, dict) or not isinstance(pair.get("field"), str):
+                continue
+            if not re.fullmatch(r"supplier|items\.\d+\.(?:description|unit)", pair["field"]):
+                continue
+            if not all(isinstance(pair.get(key), str) and pair[key].strip() for key in ("before", "after")):
+                continue
+            safe_pairs.append({key: pair[key][:500] for key in ("field", "before", "after")})
+        if safe_pairs:
+            result[-1]["corrections"] = safe_pairs
     return result
 
 
@@ -353,8 +381,14 @@ class VisionEngine:
         except (ValueError, KeyError, TypeError, ValidationError) as exc:
             raise VisionError("Local vision returned malformed receipt data. Retry a smaller region or enter the values manually.") from exc
         draft, fields = _merge(candidate, current, crop, preserve_items)
+        notices = ["Local vision suggestions require human verification. "
+                   "Uncertain values stay blank or keep the current value."]
+        notices.extend(note.strip()[:300] for note in candidate.reading_notes if note.strip())
+        # Arithmetic is checked in Python, never entrusted to the model's prose.
+        notices.extend(issue["message"] for issue in validate(draft)
+                       if issue["field"] == "item_sum" or issue["field"].endswith(".arithmetic"))
         provenance = {"source": "local_vision", "model": model, "page_count": len(pages), "crop": crop,
                       "historical_examples": len(context["historical_examples"])}
         return {"draft": draft, "field_meta": {field: {**provenance, "line_ids": []} for field in fields},
-                "notice": "Local vision suggestions require human verification. Uncertain values stay blank or keep the current value.",
+                "notice": " ".join(notices),
                 "model": model, "seconds": round(time.monotonic() - started, 3), "provenance": provenance}
