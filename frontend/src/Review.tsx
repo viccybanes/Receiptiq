@@ -25,6 +25,9 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
   const [variant, setVariant] = useState('processed')
   const [image, setImage] = useState('')
   const [zoom, setZoom] = useState(100)
+  const imageStage = useRef<HTMLDivElement>(null)
+  const panStart = useRef<{ x: number; y: number; left: number; top: number } | null>(null)
+  const [panning, setPanning] = useState(false)
   const [viewRotation, setViewRotation] = useState(() => {
     const value = Number(localStorage.getItem('receiptiq-rotation-' + id))
     return [0, 90, 180, 270].includes(value) ? value : 0
@@ -263,19 +266,41 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
         <button className="icon-button" aria-label="Zoom out" disabled={zoom <= 50} onClick={() => setZoom(zoom - 25)}><ZoomOut size={16} /></button>
         <span>{zoom}%</span>
         <button className="icon-button" aria-label="Zoom in" disabled={zoom >= 250} onClick={() => setZoom(zoom + 25)}><ZoomIn size={16} /></button>
+        <button onClick={() => {
+          setZoom(100)
+          imageStage.current?.scrollTo({ left: 0, top: 0 })
+        }}>Reset view</button>
         <button aria-label="Rotate preview clockwise" title="Rotate preview 90 degrees without rerunning OCR"
           disabled={!image}
           onClick={rotatePreview}><RotateCw size={16} /> Rotate</button>
         <button aria-label="Delete receipt" title={pending ? 'Wait for processing to finish before deleting' : 'Delete this receipt'}
           disabled={pending || busy || photosBusy} onClick={() => void deleteReceipt()}><Trash2 size={16} /> Delete</button>
       </div>
-      <div className="image-stage">
+      <div ref={imageStage} className={'image-stage' + (image && !selecting ? ' pannable' : '') + (panning ? ' panning' : '')}
+        tabIndex={0} role="region" aria-label="Receipt preview: zoom then drag to pan, or use arrow keys"
+        onPointerDown={event => {
+          if (!image || selecting || event.button !== 0) return
+          event.preventDefault()
+          event.currentTarget.focus({ preventScroll: true })
+          panStart.current = { x: event.clientX, y: event.clientY,
+            left: event.currentTarget.scrollLeft, top: event.currentTarget.scrollTop }
+          event.currentTarget.setPointerCapture(event.pointerId)
+          setPanning(true)
+        }} onPointerMove={event => {
+          if (!panStart.current) return
+          event.currentTarget.scrollLeft = panStart.current.left + panStart.current.x - event.clientX
+          event.currentTarget.scrollTop = panStart.current.top + panStart.current.y - event.clientY
+        }} onPointerUp={event => {
+          panStart.current = null; setPanning(false)
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+        }} onPointerCancel={() => { panStart.current = null; setPanning(false) }}
+        onLostPointerCapture={() => { panStart.current = null; setPanning(false) }}>
         {image ? <div className="receipt-image" style={{ width: zoom + '%',
           aspectRatio: viewRotation % 180 ? imageSize[1] / imageSize[0] : imageSize[0] / imageSize[1] }}>
           <div style={{ position: 'absolute', left: '50%', top: '50%',
             width: (viewRotation % 180 ? imageSize[0] / imageSize[1] * 100 : 100) + '%',
             transform: `translate(-50%, -50%) rotate(${viewRotation}deg)` }}>
-          <img src={image} alt={'Receipt page ' + (page + 1)}
+          <img src={image} draggable={false} alt={'Receipt page ' + (page + 1)}
             onLoad={event => setImageSize([event.currentTarget.naturalWidth, event.currentTarget.naturalHeight])} />
           {!directPhoto && currentPage && variant === 'processed' && highlighted.length > 0 && <svg className="evidence-overlay" viewBox={'0 0 ' + currentPage.width + ' ' + currentPage.height}
             aria-label="Highlighted OCR source">
