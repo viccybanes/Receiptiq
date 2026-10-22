@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowDownToLine, Check, CheckCheck, ChevronRight, FileImage, FileText, FolderOpen,
   LoaderCircle, Pause, Plus, ReceiptText, RefreshCw, Settings, ShieldCheck, Upload, X } from 'lucide-react'
 import { api, connect, download, post } from './api'
+import { localDay, receiptDays } from './receiptDays'
 import Review from './Review'
 import type { Batch, Summary } from './types'
 import WorkspaceSettings from './WorkspaceSettings'
@@ -17,6 +18,7 @@ export default function App() {
   const [modelsReady, setModelsReady] = useState(true)
   const [batches, setBatches] = useState<Batch[]>([])
   const [batchId, setBatchId] = useState('')
+  const [selectedDay, setSelectedDay] = useState('')
   const [batchInfo, setBatchInfo] = useState<Batch | null>(null)
   const [receipts, setReceipts] = useState<Summary[]>([])
   const [selected, setSelected] = useState('')
@@ -41,8 +43,8 @@ export default function App() {
   const resumeBatch = useRef<Batch | null>(null)
   const saveBeforeLeave = useRef<(() => Promise<void>) | null>(null)
   const dialog = useRef<HTMLDialogElement>(null)
-  const activeBatch = useRef(batchId)
-  activeBatch.current = batchId
+  const activeBatch = useRef(batchId + selectedDay)
+  activeBatch.current = batchId + selectedDay
 
   useEffect(() => {
     if (preview && dialog.current && !dialog.current.open) dialog.current.showModal()
@@ -61,19 +63,33 @@ export default function App() {
   }, [ready, refreshTemplates])
 
   const refresh = useCallback(async () => {
-    const [allBatches, rows, health] = await Promise.all([
-      api<Batch[]>('/batches'), api<Summary[]>('/receipts?limit=500' + (batchId ? '&batch_id=' + batchId : '')),
+    const [allBatches, health] = await Promise.all([
+      api<Batch[]>('/batches'),
       api<{ ocr_models_ready: boolean }>('/health'),
     ])
-    if (activeBatch.current !== batchId) return
+    async function readRows(id = '') {
+      const rows: Summary[] = []
+      for (let offset = 0; ; offset += 500) {
+        const page = await api<Summary[]>('/receipts?limit=500&offset=' + offset + (id ? '&batch_id=' + id : ''))
+        rows.push(...page)
+        if (page.length < 500) return rows
+      }
+    }
+    const rows: Summary[] = []
+    if (selectedDay) {
+      for (const batch of allBatches.filter(batch => localDay(batch.created_at) === selectedDay)) {
+        rows.push(...await readRows(batch.id))
+      }
+    } else rows.push(...await readRows())
+    if (activeBatch.current !== batchId + selectedDay) return
     setBatches(allBatches)
     setReceipts(rows)
     setModelsReady(health.ocr_models_ready)
     const details = batchId ? await api<Batch>('/batches/' + batchId) : null
-    if (activeBatch.current === batchId) setBatchInfo(details)
+    if (activeBatch.current === batchId + selectedDay) setBatchInfo(details)
     const eligible = new Set(rows.filter(r => r.status === 'verified' && r.revision === r.verified_revision).map(r => r.id))
     setExportIds(current => new Set([...current].filter(id => eligible.has(id))))
-  }, [batchId])
+  }, [batchId, selectedDay])
 
   useEffect(() => {
     if (!ready) return
@@ -96,7 +112,8 @@ export default function App() {
     try {
       await saveBeforeLeave.current?.()
       setSelected('')
-      setBatchId(id)
+      setSelectedDay(id)
+      setBatchId('')
       setExportIds(new Set())
     } catch (e) { setError((e as Error).message) }
   }
@@ -114,6 +131,7 @@ export default function App() {
         await post<Batch>('/batches', { name: new Date().toLocaleString(undefined,
           { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }), files: files.map(f => f.name) })
       setBatchId(batch.id)
+      setSelectedDay(localDay(batch.created_at || new Date().toISOString()))
       setSelected('')
       const entries = [...(batch.files || [])]
       const work = files.map(file => {
@@ -155,7 +173,7 @@ export default function App() {
       const form = new FormData(); form.append('file', documents[0])
       files.filter(file => file !== documents[0]).forEach(file => form.append('photos', file))
       const result = await api<{ id: string; receipt_count: number; warnings: string[] }>('/imports', { method: 'POST', body: form })
-      setSelected(''); setBatchId(result.id); setExportIds(new Set())
+      setSelected(''); setBatchId(result.id); setSelectedDay(localDay(new Date().toISOString())); setExportIds(new Set())
       setImportMessage(result.receipt_count + ' receipts imported for review. ' +
         (result.warnings.length ? result.warnings.length + ' missing photo(s); details saved in Notes.' : ''))
     } catch (e) { setError((e as Error).message) }
@@ -242,9 +260,11 @@ export default function App() {
           Manual entry remains available.</span></div>}
       <section className="batch-bar" aria-label="Batch controls">
         <FolderOpen size={19} />
-        <label className="visually-hidden" htmlFor="batch">Current batch</label>
-        <select id="batch" value={batchId} onChange={e => void chooseBatch(e.target.value)}>
-          <option value="">All receipts</option>{batches.map(b => <option key={b.id} value={b.id}>{b.name} · {b.file_count} files</option>)}
+        <label className="visually-hidden" htmlFor="batch">Upload day</label>
+        <select id="batch" value={selectedDay} onChange={e => void chooseBatch(e.target.value)}>
+          <option value="">All receipts</option>{receiptDays(batches).map(({ day, files }) =>
+            <option key={day} value={day}>{new Date(day + 'T12:00:00').toLocaleDateString(undefined,
+              { month: 'short', day: 'numeric', year: 'numeric' })} · {files} files</option>)}
         </select>
         <span className="batch-count">{receipts.length} receipts</span>
         <div className="batch-states" aria-live="polite">
@@ -253,6 +273,7 @@ export default function App() {
           <span className="verified-count"><CheckCheck size={15} /> {counts.verified || 0} verified</span>
         </div>
         {batchId && <div className="batch-actions">
+          <span>Latest upload:</span>
           <button className="quiet" onClick={() => void batchAction('cancel')} title="Cancel unfinished processing"><Pause size={15} /> Cancel pending</button>
           <button className="quiet" onClick={() => void batchAction('retry-failed')}><RefreshCw size={14} /> Retry failed</button>
         </div>}
@@ -316,7 +337,7 @@ export default function App() {
         {selected ? <Review key={selected} id={selected} saveBeforeLeave={saveBeforeLeave}
           onChanged={() => void refresh()} onError={setError}
           onOpenReceipt={id => void chooseReceipt(id)}
-          onSplit={id => { setSelected(''); setBatchId(id); setExportIds(new Set()) }}
+            onSplit={id => { setSelected(''); setBatchId(id); setSelectedDay(localDay(new Date().toISOString())); setExportIds(new Set()) }}
           onNext={() => {
             const next = receipts.find(r => r.id !== selected && ['needs_review', 'failed', 'cancelled'].includes(r.status))
             if (next) void chooseReceipt(next.id)

@@ -171,7 +171,7 @@ def create_app(root=None, *, start_worker=True, engine=None):
     @app.get("/api/v1/batches")
     def batches():
         return store.read("SELECT b.*, (SELECT COUNT(*) FROM batch_files f WHERE f.batch_id=b.id) AS file_count "
-                          "FROM batches b ORDER BY created_at DESC LIMIT 100")
+                          "FROM batches b ORDER BY created_at DESC")
 
     @app.get("/api/v1/batches/{batch_id}")
     def batch(batch_id: str):

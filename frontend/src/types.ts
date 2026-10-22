@@ -28,5 +28,5 @@ export type Receipt = Summary & {
   issues: Issue[]; evidence: { lines: Line[]; draft?: ReceiptData; photo_id?: string; examples?: Example[];
     retrieval_notice?: string }; rotation: 0 | 90 | 180 | 270
 }
-export type Batch = { id: string; name: string; file_count: number; cancelled: number;
+export type Batch = { id: string; name: string; created_at: string; file_count: number; cancelled: number;
   counts?: Record<string, number>; files?: { id: string; name: string; state: string; error: string | null }[] }

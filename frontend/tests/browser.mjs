@@ -18,7 +18,10 @@ await page.getByRole('heading', { name: 'Add expense', exact: true }).waitFor()
 await page.waitForFunction(() => !document.querySelector('.workspace-heading button')?.disabled)
 await page.screenshot({ path: path.join(artifacts, 'workspace-start.png'), fullPage: true })
 const sampleNames = ['001-printed.png', '002-synthetic-cursive.png', '003-mixed.png', 'sample.pdf']
+const newBatch = page.waitForResponse(response => response.request().method() === 'POST' &&
+  new URL(response.url()).pathname === '/api/v1/batches')
 await page.getByLabel('Choose receipt images').setInputFiles(sampleNames.map(name => path.join(root, 'artifacts', 'samples', name)))
+const batchId = (await (await newBatch).json()).id
 await page.waitForFunction(() => !!document.querySelector('#batch')?.value)
 await page.waitForFunction(() => document.querySelectorAll('.receipt-select').length === 4, { timeout: 30000 })
 const token = (await (await page.request.get('/api/v1/session')).json()).token
@@ -27,7 +30,7 @@ async function request(route, options = {}) {
   assert.equal(response.ok(), true, await response.text())
   return response.json()
 }
-const batchId = await page.locator('#batch').inputValue()
+const uploadDay = await page.locator('#batch').inputValue()
 const deadline = Date.now() + 240000
 let rows = []
 while (Date.now() < deadline) {
@@ -63,7 +66,7 @@ const patched = await page.request.patch('/api/v1/receipts/' + rows[0].id, {
 assert.equal(patched.status(), 200, await patched.text())
 await page.reload()
 await page.waitForFunction(() => !document.querySelector('.workspace-heading button')?.disabled)
-await page.locator('#batch').selectOption(batchId)
+await page.locator('#batch').selectOption(uploadDay)
 await page.waitForFunction(() => document.querySelectorAll('.receipt-select').length === 4)
 await page.locator('[data-receipt-id="' + rows[0].id + '"]').click()
 await page.getByRole('textbox', { name: 'Reviewed by' }).fill('Browser QA')

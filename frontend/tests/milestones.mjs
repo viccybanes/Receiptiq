@@ -69,7 +69,7 @@ async function checkProfileControls() {
 async function openReceipt(batchId, id) {
   await page.locator('#status-filter').selectOption('all').catch(() => {})
   await page.locator('#assignee-filter').selectOption('').catch(() => {})
-  await page.locator('#batch').selectOption(batchId)
+  await page.locator('#batch').selectOption('')
   await page.locator(`[data-receipt-id="${id}"]`).click()
   await page.getByRole('textbox', { name: 'Vendor', exact: true }).waitFor()
 }
