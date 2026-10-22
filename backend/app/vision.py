@@ -37,6 +37,21 @@ text. Leave unreadable or uncertain values as empty strings. Never invent a date
 quantity, unit, price, amount, or receipt code. Never copy prices, quantities,
 amounts, dates, or receipt codes from historical examples. Examples can only help
 recognize vendor spelling, item descriptions, units, and item types.
+Determine printed versus handwritten text separately for each visible region,
+including mixed receipts. Preserve printed spelling exactly, even unusual words.
+Only for clearly handwritten ordinary words, resolve ambiguous letter shapes
+using the image and item context into the most plausible actual word. For example,
+handwritten PIVUT may read PIVOT when the ambiguous letter and context support O.
+This is not a replacement rule: printed PIVUT must remain PIVUT. If handwriting
+versus print or the intended word is uncertain, do not autocorrect it. Do not
+spell-correct brands, vendor names, abbreviations, product/model codes, or numbers;
+an unfamiliar word is not proof of an error. Never change numeric values to make
+arithmetic fit. Use an empty string when the reading itself remains uncertain.
+Find Vendor in the seller's heading near the top of the receipt first. Prefer
+the business name over slogans, addresses, phone numbers, tax IDs, receipt titles,
+and customer/bill-to/ship-to names. Top position is a clue, not proof. Leave Vendor
+empty when no seller is identifiable; a crop without a seller heading provides
+no vendor evidence. Do not use an item description as Vendor.
 Use supplier for Vendor, receipt_date for Purchase date (YYYY-MM-DD only when
 unambiguous), receipt_number for every visible receipt/invoice/transaction code
 in reading order joined with ' / ', total for the final Total, and notes for Notes.

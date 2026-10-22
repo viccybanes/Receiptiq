@@ -29,6 +29,14 @@ Development launch and installed desktop use the same backend and workspace form
 
 ## Process a batch
 
+Local vision is instructed to resolve ambiguous handwritten ordinary words from
+the image and context (for example, PIVUT/PIVOT), while preserving printed text,
+brands, codes, and numbers. This runs through **Use vision**, not the initial OCR
+pass, and remains a reviewable suggestion. Handwriting classification and spelling
+are model judgments, not guaranteed rules; check the source before applying.
+Vendor extraction favors the first-page header and skips common receipt titles,
+contact details, and customer labels instead of falling back to a priced item.
+
 1. Choose or drop tens of JPG/PNG images. PDFs are supported. Each image represents one receipt; a PDF represents one receipt across its pages.
 2. Files transfer individually into durable queued jobs. One OCR task runs at a time. Review completed receipts while the rest process.
 3. Select a receipt. Compare the image and fields, inspect recognized text, and correct values. Fields autosave; failed saves retain the draft in the page. Resolve conflicts before navigating away.

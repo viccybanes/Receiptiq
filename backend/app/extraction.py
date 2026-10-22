@@ -41,14 +41,28 @@ def parse(lines):
         data[key] = value
         meta[key] = {"source": "ocr", "line_ids": row["ids"]}
 
+    # Only consider the first page's header before any item/amount rows. OCR
+    # cannot classify handwriting, so spelling correction belongs to vision.
+    header = [row for row in rows if row["page"] == rows[0]["page"]][:8] if rows else []
+    for row in header:
+        text = row["text"].strip()
+        if re.search(AMOUNT, text):
+            break
+        if not re.search(r"[A-Za-z]{3}", text) or re.search(
+            r"receipt|invoice|\b(?:trans|SI|OR)\s*(?:#|no)|"
+            r"\b(?:welcome|thank|date|time|tel|telephone|phone|mobile|TIN|VAT|"
+            r"customer|cashier|address|description|quantity|total)\b|"
+            r"\b(?:sold|bill|ship)\s+to\b|@|https?://|www\.|"
+            r"\b\d+\s+.*\b(?:street|st\.?|road|rd\.?|avenue|ave\.?)\b", text, re.I
+        ):
+            continue
+        assign("supplier", text, row)
+        break
+
     for row in rows:
         text = row["text"].strip()
         if not text:
             continue
-        if not data["supplier"] and re.search(r"[A-Za-z]{3}", text) and not re.search(
-            r"receipt|invoice|\b(?:trans|SI|OR)\s*(?:#|no)", text, re.I
-        ):
-            assign("supplier", text, row)
         match = re.search(r"\b(20\d{2})[-/](\d{1,2})[-/](\d{1,2})\b", text)
         if match and not data["receipt_date"]:
             try:
