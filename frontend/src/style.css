@@ -93,6 +93,8 @@ summary { cursor: pointer; font-weight: 600; }
 .image-stage { height: min(650px, 65vh); min-height: 380px; overflow: auto; padding: 28px 24px; display: flex; align-items: flex-start; justify-content: flex-start; }
 .image-stage.pannable { cursor: grab; touch-action: none; user-select: none; overscroll-behavior: contain; }
 .image-stage.panning { cursor: grabbing; }
+.image-stage { scrollbar-width: none; }
+.image-stage::-webkit-scrollbar { display: none; }
 .image-stage:focus-visible { outline: 2px solid var(--green); outline-offset: -2px; }
 .receipt-image { position: relative; margin: 0 auto; flex-shrink: 0; background: white; box-shadow: 0 5px 20px #1e352719; }
 .receipt-image img { display: block; width: 100%; height: auto; }

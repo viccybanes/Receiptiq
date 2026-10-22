@@ -22,7 +22,7 @@ export type Receipt = Summary & {
   retrieval_allowed: boolean
   duplicates: { id: string; original_name: string; status: string }[]
   vision_job: { id: string; state: string; stage: string; error: string | null; progress: number } | null
-  candidate: { id: string; base_revision: number; draft: ReceiptData; model: string; seconds: number;
+  candidate: { auto_applied?: boolean; id: string; base_revision: number; draft: ReceiptData; model: string; seconds: number;
     notice: string; provenance: Record<string, unknown> } | null
   reconciliation: { item_sum: string; total: string; possible_discount: string; can_allocate: boolean } | null
   issues: Issue[]; evidence: { lines: Line[]; draft?: ReceiptData; photo_id?: string; examples?: Example[];

@@ -11,7 +11,7 @@ from .imaging import pages, preprocess
 from .models import ReceiptData
 from .ocr import PaddleEngine
 from .retrieval import Retrieval
-from .vision import VisionEngine
+from .vision import ALLOWED_MODELS, DEFAULT_MODEL, VisionEngine
 
 logger = logging.getLogger(__name__)
 
@@ -94,10 +94,14 @@ class Worker:
         examples = self.retrieval.search(receipt["id"])
         self.store.execute("UPDATE jobs SET stage='Reading with local vision',progress=20 WHERE id=?", (job["id"],))
         lines = [line for line in receipt["evidence"]["lines"] if line["page"] == page["page_number"]]
-        result = self.vision.extract([self.store.file(page["processed_path"])], lines, examples=examples,
+        image_paths = [self.store.file(page["processed_path"])]
+        if payload.get("auto_apply"):
+            image_paths = [self.store.file(row["processed_path"]) for row in self.store.read(
+                "SELECT processed_path FROM document_pages WHERE receipt_id=? ORDER BY page_number", (receipt["id"],))]
+        result = self.vision.extract(image_paths, lines, examples=examples,
                                      crop=payload.get("crop"), model=payload["model"],
                                      current=receipt["data"], stop=lambda: self.cancelled(job),
-                                     preserve_items=len(receipt["pages"]) > 1)
+                                     preserve_items=len(receipt["pages"]) > 1 and not payload.get("auto_apply"))
         if self.cancelled(job):
             return
         result["base_revision"] = receipt["revision"]
@@ -108,10 +112,24 @@ class Worker:
             state = connection.execute("SELECT state FROM jobs WHERE id=?", (job["id"],)).fetchone()
             if not state or state["state"] != "processing":
                 return
+            stage = "Vision suggestion ready"
+            current = connection.execute("SELECT revision,status FROM receipts WHERE id=?", (receipt["id"],)).fetchone()
+            if (payload.get("auto_apply") and current and current["status"] == "needs_review"
+                    and current["revision"] == receipt["revision"] == payload.get("revision")):
+                self.store.write_data(connection, receipt["id"], result["draft"])
+                connection.execute("UPDATE receipts SET revision=revision+1,field_meta_json=?,updated_at=? WHERE id=?",
+                                   (json.dumps(result.get("field_meta", {})), now(), receipt["id"]))
+                self.store.audit(connection, receipt["id"], receipt["revision"] + 1, "auto_vision",
+                                 before=receipt["data"], after=result["draft"],
+                                 reason="Applied upload vision; human verification required")
+                result["auto_applied"] = True
+                stage = "Vision applied; ready for review"
+            elif payload.get("auto_apply"):
+                stage = "Vision suggestion ready; edits preserved"
             connection.execute("INSERT INTO extraction_runs VALUES(?,?,?,?,?)",
                                (uid(), receipt["id"], "Ollama / " + result["model"], json.dumps(result), now()))
-            connection.execute("UPDATE jobs SET state='done',stage='Vision suggestion ready',progress=100,"
-                               "error=NULL,updated_at=? WHERE id=?", (now(), job["id"]))
+            connection.execute("UPDATE jobs SET state='done',stage=?,progress=100,"
+                               "error=NULL,updated_at=? WHERE id=?", (stage, now(), job["id"]))
 
     def process(self, job):
         started = time.monotonic()
@@ -187,3 +205,21 @@ class Worker:
                                (now(), receipt["id"]))
             connection.execute("UPDATE jobs SET state='done',stage='Ready for review',progress=100,error=NULL,"
                                "updated_at=? WHERE id=?", (now(), job["id"]))
+
+            if preview_only and json.loads(job["payload_json"]).get("auto_vision") and page_count:
+                model = DEFAULT_MODEL
+                try:
+                    profile = json.loads((self.store.root / "setup-profile.json").read_text(encoding="utf-8"))
+                    if profile.get("model") in ALLOWED_MODELS:
+                        model = profile["model"]
+                except (OSError, ValueError):
+                    pass
+                first_page = connection.execute("SELECT id FROM document_pages WHERE receipt_id=? ORDER BY page_number LIMIT 1",
+                                                (receipt["id"],)).fetchone()
+                revision = connection.execute("SELECT revision FROM receipts WHERE id=?", (receipt["id"],)).fetchone()["revision"]
+                # A manual edit during preview preparation must also prevent automatic application.
+                auto_revision = revision if not current["manually_edited"] else -1
+                payload = {"page_id": first_page["id"], "model": model, "revision": auto_revision, "auto_apply": True}
+                connection.execute("INSERT INTO jobs(id,receipt_id,batch_id,state,stage,created_at,updated_at,kind,payload_json) "
+                                   "VALUES(?,?,?,?,?,?,?,?,?)", (uid(), receipt["id"], job["batch_id"], "queued",
+                                   "Waiting for local vision", now(), now(), "vision", json.dumps(payload)))

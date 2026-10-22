@@ -50,7 +50,7 @@ changes guide the local model; they do not train its weights or establish accura
 on real handwriting. Correct, verify, and opt in receipts to improve references.
 
 1. Choose or drop tens of JPG/PNG images. PDFs are supported. Each image represents one receipt; a PDF represents one receipt across its pages.
-2. Files transfer individually into durable preview jobs while the current review stays open. Use vision or Run OCR explicitly when needed. One processing task runs at a time.
+2. Files transfer individually into durable preview jobs while the current review stays open. Vision runs automatically after each uploaded preview and applies to untouched receipts; use Run OCR explicitly when needed. One processing task runs at a time.
 3. Select a receipt. Compare the image and fields, inspect recognized text, and correct values. Fields autosave; failed saves retain the draft in the page. Resolve conflicts before navigating away.
 4. Enter the reviewer name, correct blocking issues, and acknowledge remaining warnings with a reason. Verify the receipt.
 5. Select verified receipts, preview the CSV, and download. Unfinished/unverified receipts are excluded. Editing verified values removes export eligibility until verified again.
@@ -59,7 +59,7 @@ Batch controls cancel unfinished work or retry failed processing. Failed uploads
 
 Limits: 25 MB per uploaded file, 32 megapixels per image/rendered page, 30 pages per PDF, and 500 files per batch. Tests exercise 50- and 100-image queues. The interface lists up to 500 receipts in a view; use the batch selector for older work.
 
-EXIF rotation and small-angle deskew run automatically. The rotate control turns the preview 90 degrees without OCR and remembers the view in this browser. New uploads prepare previews only; use Run OCR when needed. Reprocessing preserves human edits and stores a separate OCR draft. Selecting a field highlights its source region on the enhanced image; source view and untouched-original download remain available.
+EXIF rotation and small-angle deskew run automatically. The rotate control turns the preview 90 degrees without OCR and remembers the view in this browser. New uploads prepare previews, then queue and automatically apply local vision using the configured model. One worker processes these jobs sequentially. Manual edits during processing are preserved and leave the result as a suggestion; verification is always manual. Use Run OCR when needed. Reprocessing preserves human edits and stores a separate OCR draft. Selecting a field highlights its source region on the enhanced image; source view and untouched-original download remain available.
 
 ## Optional reading and review tools
 

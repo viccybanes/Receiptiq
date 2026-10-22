@@ -155,8 +155,9 @@ export default function ReceiptAssistance({ receipt, draft, pageId, crop, onSele
       {changes.length ? <>{renderChanges(changes.slice(0, 8))}{changes.length > 8 && <details className="assistance-more-changes">
         <summary>Show {changes.length - 8} more changes</summary>{renderChanges(changes.slice(8))}</details>}</> :
         <p className="assistance-help">No visible differences from the current expense values.</p>}
-      {stale && <p className="assistance-stale">This suggestion is from an earlier saved revision. Run vision again to compare current values.</p>}
-      <button type="button" className="primary" disabled={!!busy || stale || activeJob} onClick={applyCandidate}>
+      {stale && !candidate.auto_applied && <p className="assistance-stale">This suggestion is from an earlier saved revision. Run vision again to compare current values.</p>}
+      {candidate.auto_applied && <p className="assistance-message">Vision applied automatically. Check the fields before verifying.</p>}
+      <button type="button" className="primary" disabled={!!busy || stale || activeJob || candidate.auto_applied} onClick={applyCandidate}>
         {busy === 'apply' ? <LoaderCircle size={15} className="spin" /> : <Check size={15} />}Apply vision suggestion</button>
     </details>}
     <details className="assistance-examples">

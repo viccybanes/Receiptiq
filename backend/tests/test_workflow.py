@@ -307,8 +307,69 @@ def test_upload_preview_then_explicit_ocr(client):
     assert receipt['pages']
     assert receipt['data']['supplier'] == ''
     assert receipt['evidence']['lines'] == []
+    assert receipt['vision_job']['state'] == 'queued'
+    client.post('/api/v1/jobs/' + receipt['vision_job']['id'] + '/cancel')
     assert client.post('/api/v1/receipts/' + receipt_id + '/process', json={'rotation': 0}).status_code == 202
     assert client.worker.process_one()
     receipt = client.get('/api/v1/receipts/' + receipt_id).json()
     assert receipt['data']['supplier'] == 'NORTHSIDE MARKET'
     assert receipt['evidence']['lines']
+
+@pytest.mark.parametrize('intervention', ['none', 'before', 'during', 'failure'])
+def test_upload_auto_vision_is_serial_and_preserves_edits(client, monkeypatch, intervention):
+    import copy
+    import json
+
+    calls = []
+    first_id = None
+
+    def edit(receipt_id):
+        current = client.store.receipt(receipt_id)
+        data = copy.deepcopy(current['data'])
+        data['supplier'] = 'HUMAN VENDOR'
+        response = client.patch('/api/v1/receipts/' + receipt_id,
+                                json={'revision': current['revision'], 'data': data})
+        assert response.status_code == 200
+
+    def extract(images, lines, **options):
+        assert len(client.store.read("SELECT id FROM jobs WHERE state='processing'")) == 1
+        assert images[0].is_file() and lines == []
+        calls.append(options['model'])
+        if len(calls) == 1:
+            if intervention == 'during':
+                edit(first_id)
+            if intervention == 'failure':
+                raise RuntimeError('Vision model unavailable')
+        data = copy.deepcopy(options['current'])
+        data['supplier'] = 'VISION VENDOR'
+        return {'draft': data, 'model': options['model'], 'seconds': 0.1}
+
+    monkeypatch.setattr(client.worker.vision, 'extract', extract)
+    monkeypatch.setattr(client.worker.retrieval, 'search', lambda *args, **kwargs: [])
+    monkeypatch.setattr(client.worker.engine, 'recognize', lambda *args: pytest.fail('Automatic OCR must remain disabled'))
+    (client.store.root / 'setup-profile.json').write_text(json.dumps({'model': 'qwen3-vl:4b-instruct'}))
+    group = batch(client, 2)
+    first_id = upload(client, group, 0, auto_ocr=False).json()['id']
+    second_id = upload(client, group, 1, auto_ocr=False).json()['id']
+    assert client.worker.process_one()  # Preview first receipt and persist its vision job.
+    assert client.store.receipt(first_id)['vision_job']['state'] == 'queued'
+    assert not calls
+    if intervention == 'before':
+        edit(first_id)
+    assert client.worker.process_one()  # Only first vision job runs.
+    first = client.store.receipt(first_id)
+    if intervention in ('before', 'during'):
+        assert first['data']['supplier'] == 'HUMAN VENDOR'
+        assert not first['candidate'].get('auto_applied')
+    elif intervention == 'failure':
+        assert first['vision_job']['state'] == 'failed'
+        assert first['data']['supplier'] == ''
+    else:
+        assert first['data']['supplier'] == 'VISION VENDOR'
+        assert first['candidate']['auto_applied']
+    assert first['status'] == 'needs_review' and first['verified_revision'] is None
+    assert client.worker.process_one()  # Second preview.
+    assert client.worker.process_one()  # Second vision, even after first failed.
+    assert client.store.receipt(second_id)['data']['supplier'] == 'VISION VENDOR'
+    assert calls == ['qwen3-vl:4b-instruct', 'qwen3-vl:4b-instruct']
+    assert not client.worker.process_one()
