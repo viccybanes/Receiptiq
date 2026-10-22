@@ -3,6 +3,7 @@ import type { MutableRefObject } from 'react'
 import { ArrowDownToLine, Check, ChevronLeft, ChevronRight, FileImage, LoaderCircle, Plus,
   RotateCw, Save, ShieldCheck, Trash2, Undo2, ZoomIn, ZoomOut } from 'lucide-react'
 import { ApiError, api, download, post } from './api'
+import { displayDate, inputDate } from './purchaseDate'
 import type { Receipt, ReceiptData } from './types'
 import PhotoField from './PhotoField'
 import { amount } from './amount'
@@ -351,11 +352,12 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
           const issue = receipt.issues.find(issue => issue.field === key)
           return <label key={key} className="field">
             <span>{label}</span>
-            <input value={draft[key]} maxLength={500} data-field={key}
-              type={key === 'receipt_date' ? 'date' : 'text'}
-              placeholder={key === 'receipt_number' ? 'Vendor reference — leave blank if none' : ''}
+            <input value={key === 'receipt_date' ? displayDate(draft[key]) : draft[key]} maxLength={key === 'receipt_date' ? 8 : 500} data-field={key}
+              type="text"
+              placeholder={key === 'receipt_date' ? 'MM/DD/YY' : key === 'receipt_number' ? 'Vendor reference — leave blank if none' : ''}
               onFocus={() => focus(key)} aria-invalid={!!issue?.blocking}
-              onChange={e => change({ ...draft, [key]: e.target.value })} />
+              onChange={e => change({ ...draft, [key]: key === 'receipt_date' ? inputDate(e.target.value) : e.target.value })} />
+            {key === 'receipt_date' && <small>MM/DD/YY · Two-digit years mean 2000–2099.</small>}
             {issue?.blocking && <small className="field-error">{issue.message}</small>}
           </label>
         })}

@@ -1,5 +1,7 @@
 """Header selection must not turn item text or later pages into a vendor."""
 
+import pytest
+
 from app.extraction import parse
 
 
@@ -29,3 +31,12 @@ def test_vendor_skips_address_and_customer_label():
 
 def test_empty_receipt_has_no_vendor():
     assert parse([])[0]["supplier"] == ""
+
+
+@pytest.mark.parametrize('text,expected', [
+    ('8/27/26', '2026-08-27'), ('27/8/2026', '2026-08-27'),
+    ('2026/8/27', '2026-08-27'), ('2026-08-27', '2026-08-27'),
+    ('02/29/24', '2024-02-29'), ('02/29/25', ''), ('08/09/26', ''),
+])
+def test_ocr_purchase_dates(text, expected):
+    assert parse(lines(['Hardware', 'Date: ' + text]))[0]['receipt_date'] == expected

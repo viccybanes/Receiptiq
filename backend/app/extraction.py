@@ -23,6 +23,34 @@ def decimal(value):
     return number
 
 
+def extraction_date(value):
+    """Normalize clear dates; ambiguous day/month readings need human review."""
+    value = value.strip()
+    if re.fullmatch(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}", value):
+        try:
+            return date(*map(int, re.split(r"[-/]", value))).isoformat()
+        except ValueError:
+            return ""
+    try:
+        return date.fromisoformat(value).isoformat()
+    except ValueError:
+        pass
+    match = re.fullmatch(r"(\d{1,2})[/-](\d{1,2})[/-](\d{2}|\d{4})", value)
+    if not match:
+        return ""
+    first, second, year = map(int, match.groups())
+    if first <= 12 and second <= 12 and first != second:
+        return ""
+    month, day = (second, first) if first > 12 else (first, second)
+    # Two-digit receipt years use the application's contemporary 2000-2099 range.
+    if len(match[3]) == 2:
+        year += 2000
+    try:
+        return date(year, month, day).isoformat()
+    except ValueError:
+        return ""
+
+
 def parse(lines):
     data = blank_data()
     meta = {}
@@ -63,12 +91,11 @@ def parse(lines):
         text = row["text"].strip()
         if not text:
             continue
-        match = re.search(r"\b(20\d{2})[-/](\d{1,2})[-/](\d{1,2})\b", text)
+        match = re.search(r"\b(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[/-]\d{1,2}[/-](?:\d{4}|\d{2}))\b", text)
         if match and not data["receipt_date"]:
-            try:
-                assign("receipt_date", date(*map(int, match.groups())).isoformat(), row)
-            except ValueError:
-                pass
+            normalized = extraction_date(match[0])
+            if normalized:
+                assign("receipt_date", normalized, row)
         for match in re.finditer(
             r"\b(?:receipt|invoice|trans(?:action)?|SI|OR)\s*(?:no\.?|#|number)\s*[:#]?\s*([A-Za-z0-9][\w-]*)",
             text, re.I,

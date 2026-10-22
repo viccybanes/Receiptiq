@@ -126,7 +126,7 @@ def test_partial_valid_suggestions_preserve_current_fields_item_ids_and_photos(p
                               "id": "item-1", "description": "Coffee", "quantity": "2", "unit": "cup",
                               "unit_price": "50.00", "line_total": "100.00", "photo_id": "item-photo"}]).model_dump()
     before = copy.deepcopy(current)
-    runtime["result"] = {"supplier": "", "receipt_date": "19/10/26", "currency": "ph?", "total": "NaN",
+    runtime["result"] = {"supplier": "", "receipt_date": "31/02/26", "currency": "ph?", "total": "NaN",
                          "items": [{"description": "Coffee", "quantity": "", "unit_price": "Infinity",
                                     "line_total": "90.00"}]}
     result = runtime["engine"].extract([page], [], current=current)["draft"]
@@ -171,6 +171,15 @@ def test_unknown_fields_remain_blank_and_preserved_values_have_no_false_provenan
     result = runtime["engine"].extract([page], [], current=current)
     assert "items.0.quantity" not in result["field_meta"]
     assert "items.0.line_total" in result["field_meta"]
+
+
+@pytest.mark.parametrize('text,expected', [('8/27/26', '2026-08-27'), ('27/8/2026', '2026-08-27'),
+                                         ('08/09/26', ''), ('02/29/25', '')])
+def test_vision_date_normalization_and_uncertainty(page, runtime, text, expected):
+    runtime['result'] = {'receipt_date': text, 'items': []}
+    result = runtime['engine'].extract([page], [])
+    assert result['draft']['receipt_date'] == expected
+    assert ('could not be normalized' in result['notice']) == (not expected)
 
 
 @pytest.mark.parametrize("marker", ["x", "X", "@", "×"])

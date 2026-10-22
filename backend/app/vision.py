@@ -17,7 +17,7 @@ from pathlib import Path
 
 from pydantic import Field, ValidationError
 
-from .extraction import decimal, validate
+from .extraction import decimal, extraction_date, validate
 from .imaging import MAX_PAGES, inspect_file
 from .imaging import pages as image_pages
 from .models import Item, ReceiptData, StrictModel
@@ -265,6 +265,8 @@ def _merge(candidate, current, crop, preserve_items=False):
     changed = []
     for key in ("supplier", "receipt_number", "receipt_date", "currency", "total", "notes"):
         value = getattr(candidate, key)
+        if key == "receipt_date":
+            value = extraction_date(value)
         if key == "receipt_number" and value:
             value = " / ".join(dict.fromkeys(part.strip() for part in re.split(r"\s+/\s+", value) if part.strip()))
         if _valid_value(key, value):
@@ -384,6 +386,8 @@ class VisionEngine:
         notices = ["Local vision suggestions require human verification. "
                    "Uncertain values stay blank or keep the current value."]
         notices.extend(note.strip()[:300] for note in candidate.reading_notes if note.strip())
+        if candidate.receipt_date and not extraction_date(candidate.receipt_date):
+            notices.append("Purchase date could not be normalized unambiguously. Check the original and enter MM/DD/YY.")
         # Arithmetic is checked in Python, never entrusted to the model's prose.
         notices.extend(issue["message"] for issue in validate(draft)
                        if issue["field"] == "item_sum" or issue["field"].endswith(".arithmetic"))

@@ -29,6 +29,12 @@ Development launch and installed desktop use the same backend and workspace form
 
 ## Process a batch
 
+Purchase date is displayed and entered as **MM/DD/YY** (two-digit years mean
+2000–2099). Stored dates remain ISO for sorting and existing CSV templates.
+OCR and vision normalize clear numeric dates such as `8/27/26` or `27/8/2026`;
+ambiguous readings such as `08/09/26` need review rather than a guessed month/day.
+Vision dates appear in the suggestion first and fill the form when it is applied.
+
 Local vision is instructed to resolve ambiguous handwritten ordinary words from
 the image and context (for example, PIVUT/PIVOT), while preserving printed text,
 brands, codes, and numbers. This runs through **Use vision**, not the initial OCR
