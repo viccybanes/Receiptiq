@@ -25,6 +25,11 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
   const [variant, setVariant] = useState('processed')
   const [image, setImage] = useState('')
   const [zoom, setZoom] = useState(100)
+  const [viewRotation, setViewRotation] = useState(() => {
+    const value = Number(localStorage.getItem('receiptiq-rotation-' + id))
+    return [0, 90, 180, 270].includes(value) ? value : 0
+  })
+  const [imageSize, setImageSize] = useState([1, 1])
   const [highlight, setHighlight] = useState<string[]>([])
   const [reviewer, setReviewer] = useState(() => localStorage.getItem('receiptiq-reviewer') || '')
   const [acknowledged, setAcknowledged] = useState<Set<string>>(new Set())
@@ -208,15 +213,21 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
     finally { setBusy(false) }
   }
 
-  async function rotateAndRead() {
-    setBusy(true)
-    try {
-      await saveBeforeLeave.current?.()
-      await post('/receipts/' + id + '/process', { rotation: ((receipt?.rotation || 0) + 90) % 360 })
-      await load()
-      onChanged()
-    } catch (e) { onError((e as Error).message) }
-    finally { setBusy(false) }
+  function rotatePreview() {
+    const next = (viewRotation + 90) % 360
+    localStorage.setItem('receiptiq-rotation-' + id, String(next))
+    setViewRotation(next)
+    setCrop(null)
+    cropStart.current = null
+  }
+
+  function sourcePoint(x: number, y: number) {
+    switch (viewRotation) {
+      case 90: return [y, 1 - x]
+      case 180: return [1 - x, 1 - y]
+      case 270: return [1 - y, x]
+      default: return [x, y]
+    }
   }
 
   async function deleteReceipt() {
@@ -225,6 +236,7 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
     try {
       await saveBeforeLeave.current?.()
       await api('/receipts/' + id, { method: 'DELETE' })
+      localStorage.removeItem('receiptiq-rotation-' + id)
       saveBeforeLeave.current = null
       onDeleted()
     } catch (e) { onError((e as Error).message) }
@@ -248,15 +260,20 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
         <button className="icon-button" aria-label="Zoom out" disabled={zoom <= 50} onClick={() => setZoom(zoom - 25)}><ZoomOut size={16} /></button>
         <span>{zoom}%</span>
         <button className="icon-button" aria-label="Zoom in" disabled={zoom >= 250} onClick={() => setZoom(zoom + 25)}><ZoomIn size={16} /></button>
-        <button aria-label="Rotate clockwise and rerun OCR" title="Rotate 90° and reread; edits are preserved"
-          disabled={pending || busy || photosBusy || (receipt.original_mime === 'text/csv' && !replacement)}
-          onClick={() => void rotateAndRead()}><RotateCw size={16} /> Rotate</button>
+        <button aria-label="Rotate preview clockwise" title="Rotate preview 90 degrees without rerunning OCR"
+          disabled={!image}
+          onClick={rotatePreview}><RotateCw size={16} /> Rotate</button>
         <button aria-label="Delete receipt" title={pending ? 'Wait for processing to finish before deleting' : 'Delete this receipt'}
           disabled={pending || busy || photosBusy} onClick={() => void deleteReceipt()}><Trash2 size={16} /> Delete</button>
       </div>
       <div className="image-stage">
-        {image ? <div className="receipt-image" style={{ width: zoom + '%' }}>
-          <img src={image} alt={'Receipt page ' + (page + 1)} />
+        {image ? <div className="receipt-image" style={{ width: zoom + '%',
+          aspectRatio: viewRotation % 180 ? imageSize[1] / imageSize[0] : imageSize[0] / imageSize[1] }}>
+          <div style={{ position: 'absolute', left: '50%', top: '50%',
+            width: (viewRotation % 180 ? imageSize[0] / imageSize[1] * 100 : 100) + '%',
+            transform: `translate(-50%, -50%) rotate(${viewRotation}deg)` }}>
+          <img src={image} alt={'Receipt page ' + (page + 1)}
+            onLoad={event => setImageSize([event.currentTarget.naturalWidth, event.currentTarget.naturalHeight])} />
           {!directPhoto && currentPage && variant === 'processed' && highlighted.length > 0 && <svg className="evidence-overlay" viewBox={'0 0 ' + currentPage.width + ' ' + currentPage.height}
             aria-label="Highlighted OCR source">
             {highlighted.map(line => <rect key={line.id} x={line.box[0]} y={line.box[1]} width={line.box[2] - line.box[0]}
@@ -267,14 +284,15 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
             onPointerDown={event => {
               event.preventDefault()
               const bounds = event.currentTarget.getBoundingClientRect()
-              cropStart.current = [(event.clientX - bounds.left) / bounds.width, (event.clientY - bounds.top) / bounds.height]
+              cropStart.current = sourcePoint((event.clientX - bounds.left) / bounds.width, (event.clientY - bounds.top) / bounds.height)
               event.currentTarget.setPointerCapture(event.pointerId)
               setCrop(null)
             }} onPointerMove={event => {
               if (!cropStart.current) return
               const bounds = event.currentTarget.getBoundingClientRect()
-              const x = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width))
-              const y = Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height))
+              const screenX = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width))
+              const screenY = Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height))
+              const [x, y] = sourcePoint(screenX, screenY)
               const [startX, startY] = cropStart.current
               setCrop([Math.min(x, startX), Math.min(y, startY), Math.max(x, startX), Math.max(y, startY)])
             }} onPointerUp={() => { cropStart.current = null }}
@@ -282,6 +300,7 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
             <rect x={crop?.[0] || 0} y={crop?.[1] || 0} width={crop ? crop[2] - crop[0] : 0}
               height={crop ? crop[3] - crop[1] : 0} />
           </svg>}
+          </div>
         </div> : <div className="image-empty"><FileImage size={36} strokeWidth={1} />
           <p>{pending ? 'Preparing receipt preview…' : 'No preview available. Download the original to inspect it.'}</p></div>}
       </div>

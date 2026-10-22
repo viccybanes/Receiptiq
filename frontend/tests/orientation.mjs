@@ -16,22 +16,25 @@ try {
   assert.equal(response.status(), 202)
   const receiptId = (await response.json()).id
   await page.locator(`[data-receipt-id="${receiptId}"]`).click()
-  const rotate = page.getByRole('button', { name: 'Rotate clockwise and rerun OCR' })
+  const rotate = page.getByRole('button', { name: 'Rotate preview clockwise' })
   await rotate.waitFor()
-  await page.waitForFunction(() => !document.querySelector('[aria-label="Rotate clockwise and rerun OCR"]')?.disabled,
+  await page.waitForFunction(() => !document.querySelector('[aria-label="Rotate preview clockwise"]')?.disabled,
     { }, { timeout: 120000 })
-  const dimensions = () => page.locator('.image-panel img').evaluate(image => [image.naturalWidth, image.naturalHeight])
+  const dimensions = () => page.locator('.image-panel img').evaluate(image => { const box = image.getBoundingClientRect(); return [Math.round(box.width), Math.round(box.height)] })
   const imageHash = () => page.locator('.image-panel img').evaluate(async image => {
     const bytes = await (await fetch(image.src)).arrayBuffer()
     return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)))
   })
   await page.waitForFunction(() => document.querySelector('.image-panel img')?.naturalWidth > 0)
   const before = await dimensions()
+  const processingRequests = []
+  page.on('request', request => { if (request.url().endsWith('/process')) processingRequests.push(request.url()) })
   await rotate.click()
-  await page.waitForTimeout(2500)
-  await page.waitForFunction(() => !document.querySelector('[aria-label="Rotate clockwise and rerun OCR"]')?.disabled,
+  await page.waitForTimeout(100)
+  await page.waitForFunction(() => !document.querySelector('[aria-label="Rotate preview clockwise"]')?.disabled,
     { }, { timeout: 120000 })
   await page.waitForTimeout(500)
+  assert.equal(processingRequests.length, 0, 'Preview rotation must never request OCR')
   const after = await dimensions()
   const savedPixels = await imageHash()
   assert.equal(after[0] > after[1], before[0] < before[1], 'Preview must show saved rotation before reload')
@@ -41,6 +44,18 @@ try {
   assert.deepEqual(await dimensions(), after, 'Reload must preserve displayed orientation')
   // Dimensions alone cannot detect a 180-degree flip or mirrored image.
   assert.deepEqual(await imageHash(), savedPixels, 'Reload must preserve the exact displayed pixels')
+  await page.getByRole('button', { name: 'Select region', exact: true }).click()
+  const overlay = page.getByRole('img', { name: 'Drag to select receipt region' })
+  await overlay.scrollIntoViewIfNeeded()
+  const bounds = await overlay.boundingBox()
+  await page.mouse.move(bounds.x + bounds.width * .2, bounds.y + bounds.height * .2)
+  await page.mouse.down()
+  await page.mouse.move(bounds.x + bounds.width * .6, bounds.y + bounds.height * .5)
+  await page.mouse.up()
+  const region = await overlay.locator('rect').evaluate(rect => ['x', 'y', 'width', 'height'].map(name => Number(rect.getAttribute(name))))
+  for (const [index, expected] of [.2, .4, .3, .4].entries()) {
+    assert.ok(Math.abs(region[index] - expected) < .02, 'Rotated crop must map to original page coordinates')
+  }
   page.once('dialog', dialog => dialog.dismiss())
   await page.getByRole('button', { name: 'Delete receipt', exact: true }).click()
   assert.equal(await page.locator(`[data-receipt-id="${receiptId}"]`).count(), 1, 'Cancel must keep the receipt')
@@ -54,7 +69,7 @@ try {
   await page.getByRole('heading', { name: 'Add expense', exact: true }).waitFor()
   assert.equal(await page.locator(`[data-receipt-id="${receiptId}"]`).count(), 0, 'Deleted receipt must stay removed')
   console.log('PASS: delete cancellation preserves receipt; confirmed deletion survives reload')
-  console.log('PASS: rotation appears immediately after processing and stays unchanged on reload')
+  console.log('PASS: preview rotation never reruns OCR and stays unchanged on reload')
 } finally {
   await browser.close()
 }
