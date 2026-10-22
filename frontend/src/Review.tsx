@@ -155,8 +155,12 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
   const currentPage = receipt?.pages[page]
   const replacement = draft?.receipt_photo_id || ''
   const directPhoto = replacement !== (receipt?.evidence.photo_id || '')
+  const pending = !!receipt && ['queued', 'processing'].includes(receipt.status)
   useEffect(() => {
     setImage('')
+    // Page IDs survive reprocessing. Wait for the saved pixels before fetching;
+    // rotation changes when queued, before the worker replaces the image files.
+    if (pending && !directPhoto) return
     if (!currentPage && !replacement) return
     if (directPhoto && !replacement && !receipt?.original_mime.startsWith('image/')) return
     let alive = true
@@ -168,7 +172,7 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
       if (alive) { url = URL.createObjectURL(blob); setImage(url) }
     }).catch((e: Error) => onError(e.message))
     return () => { alive = false; if (url) URL.revokeObjectURL(url) }
-  }, [id, currentPage?.id, variant, receipt?.rotation, replacement, directPhoto]) // eslint-disable-line
+  }, [id, currentPage?.id, variant, receipt?.rotation, replacement, directPhoto, pending]) // eslint-disable-line
 
   function change(next: ReceiptData) {
     if (draftRef.current) {
@@ -215,7 +219,6 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
   }
 
   if (!receipt || !draft) return <div className="review-placeholder"><LoaderCircle size={24} className="spin" /><p>Opening receipt…</p></div>
-  const pending = ['queued', 'processing'].includes(receipt.status)
   const warnings = receipt.issues.filter(issue => !issue.blocking)
   const highlighted = receipt.evidence.lines.filter(line => highlight.includes(line.id) && line.page === page)
 
