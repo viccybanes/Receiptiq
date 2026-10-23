@@ -71,8 +71,12 @@ Other: clearly identifiable expenses outside these categories. If the descriptio
 is unclear or insufficient to classify confidently, use Materials, not Other.
 Do not invent a description to justify a category. Return item_number as null;
 the app assigns item numbers and preserves existing manually selected Types.
-Use decimal strings
-without currency symbols or grouping separators. Do not calculate missing prices
+Use whole-number strings for Quantity, never fractional quantities. Monetary values
+allow at most two decimal places. For handwritten numbers, a dot followed by three
+or more digits is a grouping separator, not a decimal point: 1.000 means 1000,
+2.230 means 2230, and 12.50 stays 12.50. Report these interpretations in reading_notes.
+Do not apply this rule to dates, receipt codes, item dimensions or descriptions.
+Use decimal strings without currency symbols or grouping separators. Do not calculate missing prices
 or amounts. Do not extract tax, subtotal, or discount fields. Do not allocate an
 implicit discount: a human must confirm any arithmetic difference. Preserve item
 reading order. For a cropped image, extract only values visible in that region.
@@ -267,6 +271,22 @@ def _valid_value(key, value):
     return True
 
 
+def _numeric_value(key, value):
+    """Normalize only proposed numeric fields, never existing human-entered data."""
+    value = value.strip()
+    if re.fullmatch(r"-?\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?", value):
+        value = value.replace(",", "")
+    elif re.fullmatch(r"-?\d+(?:\.\d{3,})+", value):
+        value = value.replace(".", "")
+    try:
+        number = decimal(value)
+    except ValueError:
+        return ""
+    if key == "quantity":
+        return str(int(number)) if number == number.to_integral_value() else ""
+    return value if re.fullmatch(r"-?\d+(?:\.\d{1,2})?", value) else ""
+
+
 def _merge(candidate, current, crop, preserve_items=False):
     initial = copy.deepcopy(current) if current is not None else {"currency": ""}
     draft = ReceiptData.model_validate(initial).model_dump()
@@ -442,10 +462,23 @@ class VisionEngine:
             candidate = VisionReceipt.model_validate_json(content)
         except (ValueError, KeyError, TypeError, ValidationError) as exc:
             raise VisionError("Local vision returned malformed receipt data. Retry a smaller region or enter the values manually.") from exc
+        numeric_notes = []
+        numeric_fields = [(candidate, "total", "Total")]
+        for index, item in enumerate(candidate.items):
+            numeric_fields.extend((item, key, f"Line {index + 1} {label}") for key, label in
+                                  (("quantity", "Quantity"), ("unit_price", "Unit price"), ("line_total", "Amount")))
+        for owner, key, label in numeric_fields:
+            original = getattr(owner, key)
+            normalized = _numeric_value(key, original)
+            if original and original != normalized:
+                numeric_notes.append(f"{label}: interpreted {original} as {normalized}; check the original."
+                                     if normalized else f"{label}: invalid numeric reading {original}; check the original.")
+            setattr(owner, key, normalized)
         draft, fields = _merge(candidate, current, crop, preserve_items)
         notices = ["Local vision suggestions require human verification. "
                    "Uncertain values stay blank or keep the current value."]
         notices.extend(note.strip()[:300] for note in candidate.reading_notes if note.strip())
+        notices.extend(numeric_notes)
         if candidate.receipt_date and not extraction_date(candidate.receipt_date):
             notices.append("Purchase date could not be normalized unambiguously. Check the original and enter MM/DD/YY.")
         # Arithmetic is checked in Python, never entrusted to the model's prose.

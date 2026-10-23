@@ -26,6 +26,7 @@ function format(value: bigint, places: number): string {
 function divide(numerator: string, denominator: string, places: number): string | null {
   const a = decimal(numerator), b = decimal(denominator)
   if (a === null || b === null || b === 0n) return null
+  if (places === 0) return a % b === 0n ? String(a / b) : null
   const sign = (a < 0n) !== (b < 0n) ? -1n : 1n
   const absA = a < 0n ? -a : a, absB = b < 0n ? -b : b
   return format(sign * ((absA * 10n ** BigInt(places) + absB / 2n) / absB), places)
@@ -45,18 +46,19 @@ function equal(a: string, b: string | null): boolean {
 export function completeAmounts(data: ReceiptData, previous?: ReceiptData): ReceiptData {
   const items = data.items.map(item => {
     const next = { ...item }, old = previous?.items.find(value => value.id === item.id)
+    if (/^-?\d+\.0+$/.test(next.quantity)) next.quantity = next.quantity.split('.')[0]
     const amountEdited = old && next.line_total !== old.line_total
     const factorsEdited = old && (next.quantity !== old.quantity || next.unit_price !== old.unit_price)
     if (amountEdited && next.line_total && next.unit_price && next.quantity === old.quantity) {
-      next.quantity = divide(next.line_total, next.unit_price, 6) ?? next.quantity
+      next.quantity = divide(next.line_total, next.unit_price, 0) ?? next.quantity
     } else if (!next.quantity && next.line_total && next.unit_price) {
-      next.quantity = divide(next.line_total, next.unit_price, 6) ?? ''
+      next.quantity = divide(next.line_total, next.unit_price, 0) ?? ''
     }
-    if (!next.unit_price && next.line_total && next.quantity) {
+    if (!next.unit_price && next.line_total && /^-?\d+$/.test(next.quantity)) {
       next.unit_price = divide(next.line_total, next.quantity, 2) ?? ''
     }
     if (!next.line_total || (factorsEdited && equal(old.line_total, amount(old.quantity, old.unit_price)))) {
-      next.line_total = amount(next.quantity, next.unit_price) ?? next.line_total
+      if (/^-?\d+$/.test(next.quantity)) next.line_total = amount(next.quantity, next.unit_price) ?? next.line_total
     }
     return next
   })

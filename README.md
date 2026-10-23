@@ -183,3 +183,16 @@ To restore the former 180-second read timeout, set
 `RECEIPTIQ_VISION_TIMEOUT_SECONDS=180` in the backend environment and restart it.
 Use `0` (the default) to wait indefinitely. The wait-policy change is isolated in
 its own `fix(vision)` commit so it can also be reverted independently.
+
+### Numeric extraction and quantities
+
+Quantity uses whole numbers. Exact division may fill a missing quantity; a
+fractional result stays unresolved instead of being rounded. Integer-valued legacy
+quantities such as `2.000000` display/save as `2`. Fractional drafts remain editable
+but cannot be verified until corrected.
+
+Vision numeric fields interpret a dot followed by three or more digits as a
+grouping separator (`1.000` becomes `1000`, `2.230` becomes `2230`). Prices and
+amounts retain at most two decimal places (`12.50` remains `12.50`). Separator
+changes appear in the reading notice for human review. Dates, receipt numbers,
+descriptions, and existing manual values are not rewritten by this rule.

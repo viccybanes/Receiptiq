@@ -176,6 +176,8 @@ def validate(data):
             if item[key]:
                 try:
                     values[key] = decimal(item[key])
+                    if key == "quantity" and values[key] != values[key].to_integral_value():
+                        issue(prefix + ".quantity", "Quantity must be a whole number. Check the original.", True)
                 except ValueError as exc:
                     issue(prefix + "." + key, str(exc), True)
         if "line_total" in values:

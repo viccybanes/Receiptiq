@@ -1,9 +1,10 @@
 """Validated API input and editable receipt values."""
 
+import re
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class StrictModel(BaseModel):
@@ -20,6 +21,12 @@ class Item(StrictModel):
     line_total: str = Field(default="", max_length=32)
     item_type: str = Field(default="Materials", min_length=1, max_length=100)
     photo_id: str = Field(default="", max_length=36)
+
+    @field_validator("quantity")
+    @classmethod
+    def whole_quantity(cls, value):
+        # Keep invalid drafts editable; verification flags fractional quantities.
+        return value.split(".")[0] if re.fullmatch(r"-?\d+\.0+", value) else value
 
 
 class ReceiptData(StrictModel):

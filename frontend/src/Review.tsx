@@ -455,11 +455,13 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
               {!ITEM_TYPES.includes(item.item_type) && <option value={item.item_type}>{item.item_type}</option>}
               {ITEM_TYPES.map(type => <option key={type} value={type}>{type}</option>)}
             </select> : <input aria-label={'Item ' + (index + 1) + ' ' + ['Quantity', 'Unit', 'Unit price', 'Amount', 'Type'][position]}
-              inputMode={['unit', 'item_type'].includes(key) ? 'text' : 'decimal'}
+              inputMode={key === 'quantity' ? 'numeric' : ['unit', 'item_type'].includes(key) ? 'text' : 'decimal'}
+              pattern={key === 'quantity' ? '-?[0-9]*' : undefined}
               data-field={'items.' + index + '.' + key}
               value={item[key]} placeholder={key === 'unit' ? 'bag, pc, m...' : ''}
               onFocus={() => focus('items.' + index + '.' + key)}
               onChange={e => {
+                if (key === 'quantity' && !/^-?\d*$/.test(e.target.value)) return
                 const next = { ...item, [key]: e.target.value }
                 change({ ...draft, items: draft.items.map((value, i) => i === index ? next : value) })
               }} />}</label>)}

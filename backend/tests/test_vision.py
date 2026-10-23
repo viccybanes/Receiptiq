@@ -429,3 +429,40 @@ def test_vision_keeps_existing_manual_category(page, runtime):
     runtime['result'] = {'items': [{'description': 'Hammer', 'item_type': 'Tools'}]}
     result = runtime['engine'].extract([page], [], current=current)
     assert result['draft']['items'][0]['item_type'] == 'Equipment'
+
+@pytest.mark.parametrize(('field', 'raw', 'expected'), [
+    ('unit_price', '1.000', '1000'),
+    ('line_total', '2.230', '2230'),
+    ('total', '1.000.000', '1000000'),
+    ('total', '1.2345', '12345'),
+    ('total', '12.50', '12.50'),
+    ('total', '1,000.50', '1000.50'),
+    ('total', '1.23.456', ''),
+    ('quantity', '3.00', '3'),
+    ('quantity', '2.230', '2230'),
+    ('quantity', '1.5', ''),
+    ('quantity', 'NaN', ''),
+    ('unit_price', '1e3', ''),
+])
+def test_numeric_reading_policy(field, raw, expected):
+    assert vision._numeric_value(field, raw) == expected
+
+
+def test_numeric_policy_reaches_draft_without_changing_codes_or_descriptions(page, runtime):
+    runtime['result'] = {
+        'receipt_number': '2.230', 'receipt_date': '2026-10-19', 'total': '2.000',
+        'items': [{'description': 'Pipe 1.000', 'quantity': '2.00',
+                   'unit_price': '1.000', 'line_total': '2.000'},
+                  {'description': 'Uncertain', 'quantity': '1.5'}],
+    }
+    result = runtime['engine'].extract([page], [])
+    draft = result['draft']
+    assert draft['receipt_number'] == '2.230'
+    assert draft['receipt_date'] == '2026-10-19'
+    assert draft['total'] == '2000'
+    assert draft['items'][0]['description'] == 'Pipe 1.000'
+    assert draft['items'][0]['quantity'] == '2'
+    assert draft['items'][0]['unit_price'] == '1000'
+    assert draft['items'][1]['quantity'] == ''
+    assert 'interpreted 1.000 as 1000' in result['notice']
+    assert 'invalid numeric reading 1.5' in result['notice']

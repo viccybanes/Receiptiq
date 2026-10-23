@@ -247,3 +247,16 @@ def test_v1_migration_backup_keeps_verified_data_and_export(client):
     migrated.execute("DELETE FROM receipt_items WHERE receipt_id=?", (receipt["id"],))
     assert client.post("/api/v1/exports", json={"receipt_ids": [receipt["id"]]}).status_code == 409
     assert client.get(export_path).content == old_export
+
+
+def test_whole_quantities_preserve_drafts_but_block_fractional_verification(client):
+    receipt, _ = ready_receipt(client)
+    receipt['data']['items'][0]['quantity'] = '2.000000'
+    receipt = save(client, receipt)
+    assert receipt['data']['items'][0]['quantity'] == '2'
+    receipt['data']['items'][0]['quantity'] = '1.5'
+    receipt = save(client, receipt)
+    assert receipt['data']['items'][0]['quantity'] == '1.5'
+    assert any(issue['field'] == 'items.0.quantity' and issue['blocking']
+               for issue in validate(receipt['data']))
+    assert verify(client, receipt).status_code == 422
