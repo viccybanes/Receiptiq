@@ -313,18 +313,18 @@ export default function App() {
             <div className="queue-list">
               {pendingUploads.map(file => <div className="queue-row" key={'upload-' + file.id} role="status">
                 <LoaderCircle size={18} className="spin" /><div className="receipt-select">
-                  <span className="receipt-name">{file.name}</span><span className="receipt-file">Uploading...</span>
+                  <span className="receipt-name">Uploading...</span>
                 </div></div>)}
               {visible.map((receipt, index) => {
                 const data = JSON.parse(receipt.data_json) as { supplier: string; total: string; currency: string }
+                const vendor = data.supplier?.trim() || 'Unknown vendor'
                 return <div key={receipt.id} className={'queue-row ' + (selected === receipt.id ? 'active' : '')}>
-                  {receipt.status === 'verified' ? <input type="checkbox" aria-label={'Select ' + receipt.original_name + ' for export'}
+                  {receipt.status === 'verified' ? <input type="checkbox" aria-label={'Select ' + vendor + ' receipt ' + (index + 1) + ' for export'}
                     checked={exportIds.has(receipt.id)} onChange={e => setExportIds(current => {
                       const next = new Set(current); if (e.target.checked) next.add(receipt.id); else next.delete(receipt.id); return next
                     })} /> : <span className="row-index">{String(index + 1).padStart(2, '0')}</span>}
                   <button className="receipt-select" data-receipt-id={receipt.id} onClick={() => void chooseReceipt(receipt.id)}>
-                    <span className="receipt-name">{data.supplier || receipt.original_name}</span>
-                    <span className="receipt-file">{receipt.original_name}</span>
+                    <span className="receipt-name">{vendor}</span>
                     {receipt.assignee && <span className="receipt-file">Assigned to {receipt.assignee}</span>}
                     {!!receipt.second_review && <span className="receipt-file">Needs second review</span>}
                     {receipt.duplicate_count > 0 && <span className="receipt-file">Duplicate image exists</span>}
