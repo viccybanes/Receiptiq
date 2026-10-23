@@ -360,3 +360,28 @@ def test_cancellation_prevents_inference_and_late_results(page, runtime):
 
     with pytest.raises(VisionError, match="cancelled"):
         runtime["engine"].extract([page], [], stop=cancelled_after_response)
+
+@pytest.mark.parametrize('category', [
+    'Materials', 'Tools', 'Equipment', 'Outside Labor', 'Services', 'Permits & Fees',
+    'Utilities', 'Transportation', 'Logistics', 'Other',
+])
+def test_vision_accepts_workplace_category_for_new_items(page, runtime, category):
+    runtime['result'] = {'items': [{'description': 'Clearly described purchase', 'item_type': category}]}
+    result = runtime['engine'].extract([page], [])
+    assert result['draft']['items'][0]['item_type'] == category
+    assert 'items.0.item_type' in result['field_meta']
+
+
+@pytest.mark.parametrize('category', ['', 'Unknown', 'Food', 'Material'])
+def test_uncertain_or_unsupported_vision_category_defaults_to_materials(page, runtime, category):
+    runtime['result'] = {'items': [{'description': 'Unclear item', 'item_type': category}]}
+    result = runtime['engine'].extract([page], [])
+    assert result['draft']['items'][0]['item_type'] == 'Materials'
+
+
+def test_vision_keeps_existing_manual_category(page, runtime):
+    from app.models import ReceiptData
+    current = ReceiptData(items=[{'description': 'Hammer', 'item_type': 'Equipment'}]).model_dump()
+    runtime['result'] = {'items': [{'description': 'Hammer', 'item_type': 'Tools'}]}
+    result = runtime['engine'].extract([page], [], current=current)
+    assert result['draft']['items'][0]['item_type'] == 'Equipment'

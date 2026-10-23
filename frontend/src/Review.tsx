@@ -9,6 +9,9 @@ import PhotoField from './PhotoField'
 import { completeAmounts } from './amount'
 import ReceiptAssistance from './ReceiptAssistance'
 
+const ITEM_TYPES = ['Materials', 'Tools', 'Equipment', 'Outside Labor', 'Services', 'Permits & Fees',
+  'Utilities', 'Transportation', 'Logistics', 'Other']
+
 type Props = { id: string; saveBeforeLeave: MutableRefObject<(() => Promise<void>) | null>;
   onChanged: () => void; onError: (error: string) => void; onNext: () => void;
   onOpenReceipt: (id: string) => void; onSplit: (batchId: string) => void; onDeleted: () => void }
@@ -445,23 +448,27 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
             value={item.description} placeholder="Description" data-field={'items.' + index + '.description'} onFocus={() => focus('items.' + index + '.description')}
             onChange={e => change({ ...draft, items: draft.items.map((value, i) => i === index ? { ...value, description: e.target.value } : value) })} /></label>
           {(['quantity', 'unit', 'unit_price', 'line_total', 'item_type'] as const).map((key, position) => <label key={key}><span>{['Quantity', 'Unit', 'Unit price', 'Amount', 'Type'][position]}</span>
-            <input aria-label={'Item ' + (index + 1) + ' ' + ['Quantity', 'Unit', 'Unit price', 'Amount', 'Type'][position]}
+            {key === 'item_type' ? <select aria-label={'Item ' + (index + 1) + ' Type'}
+              data-field={'items.' + index + '.item_type'} value={item.item_type}
+              onChange={e => change({ ...draft, items: draft.items.map((value, i) =>
+                i === index ? { ...value, item_type: e.target.value } : value) })}>
+              {!ITEM_TYPES.includes(item.item_type) && <option value={item.item_type}>{item.item_type}</option>}
+              {ITEM_TYPES.map(type => <option key={type} value={type}>{type}</option>)}
+            </select> : <input aria-label={'Item ' + (index + 1) + ' ' + ['Quantity', 'Unit', 'Unit price', 'Amount', 'Type'][position]}
               inputMode={['unit', 'item_type'].includes(key) ? 'text' : 'decimal'}
               data-field={'items.' + index + '.' + key}
               value={item[key]} placeholder={key === 'unit' ? 'bag, pc, m...' : ''}
-              list={key === 'item_type' ? 'expense-types' : undefined}
               onFocus={() => focus('items.' + index + '.' + key)}
               onChange={e => {
                 const next = { ...item, [key]: e.target.value }
                 change({ ...draft, items: draft.items.map((value, i) => i === index ? next : value) })
-              }} /></label>)}
+              }} />}</label>)}
           <PhotoField receiptId={id} photoId={item.photo_id} label="Photo of item purchased" onBusy={photoBusy} onError={onError}
             onChange={photoId => change({ ...draftRef.current!, items: draftRef.current!.items.map(value =>
               value.id === item.id ? { ...value, photo_id: photoId } : value) })} />
           <button type="button" className="icon-button remove-item" aria-label={'Remove item ' + (index + 1)}
             onClick={() => change({ ...draft, items: draft.items.filter((_, i) => i !== index) })}><Trash2 size={15} /></button>
         </fieldset>)}
-        <datalist id="expense-types"><option value="Materials" /></datalist>
         <button type="button" className="quiet" disabled={photosBusy} onClick={() => change({ ...draft, items: [...draft.items,
           { id: crypto.randomUUID(), item_number: null, description: '', quantity: '1', unit: '', unit_price: '',
             line_total: '', item_type: 'Materials', photo_id: '' }] })}><Plus size={14} /> Add line</button>
