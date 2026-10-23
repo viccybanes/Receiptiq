@@ -4,9 +4,9 @@ import base64
 import copy
 import io
 import json
+import socket
 import threading
 import time
-import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -37,6 +37,10 @@ def runtime():
             state["request"] = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             if state.get("delay"):
                 time.sleep(state["delay"])
+            if state.get("disconnect"):
+                self.connection.shutdown(socket.SHUT_RDWR)
+                self.connection.close()
+                return
             result = state.get("raw")
             if result is None:
                 result = json.dumps({"done": True, "message": {"content": json.dumps(state["result"])}}).encode()
@@ -45,6 +49,9 @@ def runtime():
                 self.send_header("Location", state["redirect"])
             self.send_header("Content-Type", "application/json")
             self.end_headers()
+            if state.get("body_delay"):
+                self.wfile.flush()
+                time.sleep(state["body_delay"])
             try:
                 self.wfile.write(result)
             except (BrokenPipeError, ConnectionResetError):
@@ -335,14 +342,51 @@ def test_unavailable_runtime_and_timeout_leave_manual_entry_available(page, runt
     engine = VisionEngine(port=1, timeout=0.1)
 
     def refused(*args, **kwargs):
-        raise urllib.error.URLError(ConnectionRefusedError("Runtime is not running"))
+        raise ConnectionRefusedError("Runtime is not running")
 
-    monkeypatch.setattr(engine.opener, "open", refused)
+    monkeypatch.setattr(engine, "_request", refused)
     with pytest.raises(VisionError, match="unavailable"):
         engine.extract([page], [])
     runtime["delay"] = 0.05
     with pytest.raises(VisionError, match="timed out"):
         VisionEngine(port=runtime["engine"].port, timeout=0.01).extract([page], [])
+
+
+def test_unlimited_wait_and_reversible_timeout(page, runtime, monkeypatch):
+    monkeypatch.delenv("RECEIPTIQ_VISION_TIMEOUT_SECONDS", raising=False)
+    engine = VisionEngine(port=runtime["engine"].port)
+    assert engine.timeout is None
+    runtime["delay"] = 0.15
+    assert engine.extract([page], [])["draft"]["supplier"] == "NORTHSIDE"
+    monkeypatch.setenv("RECEIPTIQ_VISION_TIMEOUT_SECONDS", "0.01")
+    with pytest.raises(VisionError, match="timed out"):
+        VisionEngine(port=engine.port).extract([page], [])
+    monkeypatch.setenv("RECEIPTIQ_VISION_TIMEOUT_SECONDS", "180")
+    assert VisionEngine().timeout == 180
+    monkeypatch.setenv("RECEIPTIQ_VISION_TIMEOUT_SECONDS", "nan")
+    with pytest.raises(VisionError, match="timeout"):
+        VisionEngine()
+
+
+@pytest.mark.parametrize("delay_stage", ["delay", "body_delay"])
+def test_cancellation_interrupts_unlimited_inference(page, runtime, delay_stage):
+    runtime[delay_stage] = 3
+    stop = threading.Event()
+    timer = threading.Timer(0.3, stop.set)
+    timer.start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(VisionError, match="cancelled"):
+            runtime["engine"].extract([page], [], stop=stop)
+        assert time.monotonic() - started < 2
+    finally:
+        timer.cancel()
+
+
+def test_runtime_disconnect_stops_unlimited_wait(page, runtime):
+    runtime["disconnect"] = True
+    with pytest.raises(VisionError, match="unavailable"):
+        runtime["engine"].extract([page], [])
 
 
 def test_cancellation_prevents_inference_and_late_results(page, runtime):

@@ -8,10 +8,9 @@ import json
 import math
 import os
 import re
+import select
 import socket
 import time
-import urllib.error
-import urllib.request
 from datetime import date
 from pathlib import Path
 
@@ -129,11 +128,6 @@ def _output_schema():
     item_schema["required"] = list(item_schema["properties"])
     item_schema["properties"]["item_type"]["enum"] = list(ITEM_TYPES)
     return schema
-
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        raise VisionError("Local vision refused an HTTP redirect. Restart the app-managed local runtime.")
 
 
 def _crop_rect(crop):
@@ -339,8 +333,43 @@ def _runtime_error(detail, status=None):
     return VisionError("Local vision could not read this page. Restart the local runtime, try a smaller region, or enter values manually.")
 
 
+class _CancellableReader(io.RawIOBase):
+    """Poll before each socket read; Windows cannot reliably interrupt a blocked recv."""
+
+    def __init__(self, raw, sock, stop, timeout):
+        self.raw, self.sock, self.stop, self.timeout = raw, sock, stop, timeout
+
+    def readable(self):
+        return True
+
+    def readinto(self, buffer):
+        started = time.monotonic()
+        while True:
+            _cancelled(self.stop)
+            wait = 0.2
+            if self.timeout is not None:
+                remaining = self.timeout - (time.monotonic() - started)
+                if remaining <= 0:
+                    raise TimeoutError()
+                wait = min(wait, remaining)
+            if select.select([self.sock], [], [], wait)[0]:
+                return self.raw.readinto(buffer)
+
+    def close(self):
+        self.raw.close()
+        super().close()
+
+
+class _VisionResponse(http.client.HTTPResponse):
+    def __init__(self, sock, stop, timeout, **kwargs):
+        super().__init__(sock, **kwargs)
+        raw = sock.makefile("rb", buffering=0)
+        self.fp.close()
+        self.fp = io.BufferedReader(_CancellableReader(raw, sock, stop, timeout))
+
+
 class VisionEngine:
-    def __init__(self, port=None, timeout=180):
+    def __init__(self, port=None, timeout=None):
         try:
             value = os.environ.get("RECEIPTIQ_OLLAMA_PORT", "11435") if port is None else port
             self.port = int(value)
@@ -348,11 +377,30 @@ class VisionEngine:
                 raise ValueError()
         except (TypeError, ValueError) as exc:
             raise VisionError("Configure RECEIPTIQ_OLLAMA_PORT as a local TCP port between 1 and 65535.") from exc
-        if not isinstance(timeout, (float, int)) or not math.isfinite(timeout) or timeout <= 0:
-            raise VisionError("Local vision timeout must be a positive number of seconds.")
-        self.timeout = timeout
+        try:
+            timeout = float(os.environ.get("RECEIPTIQ_VISION_TIMEOUT_SECONDS", "0")) if timeout is None else timeout
+            if isinstance(timeout, bool) or not isinstance(timeout, (float, int)) or not math.isfinite(timeout) or timeout < 0:
+                raise ValueError()
+        except (TypeError, ValueError) as exc:
+            raise VisionError("Local vision timeout must be zero (unlimited) or positive seconds.") from exc
+        self.timeout = timeout or None
         self.url = f"http://127.0.0.1:{self.port}/api/chat"
-        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
+
+    def _request(self, body, stop):
+        # Bound connection setup, not inference. A slow model is not a failed model.
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        connection.response_class = lambda sock, **kwargs: _VisionResponse(sock, stop, self.timeout, **kwargs)
+        try:
+            connection.request("POST", "/api/chat", body=body, headers={"Content-Type": "application/json"})
+            connection.sock.settimeout(None)
+            with connection.getresponse() as response:
+                if 300 <= response.status < 400:
+                    raise VisionError("Local vision refused an HTTP redirect. Restart the app-managed local runtime.")
+                if response.status >= 400:
+                    raise _runtime_error(response.read(4096).decode("utf-8", errors="replace"), response.status)
+                return response.read(MAX_RESPONSE_BYTES + 1)
+        finally:
+            connection.close()
 
     def extract(self, pages, ocr_lines, examples=(), crop=None, model=DEFAULT_MODEL, current=None, stop=None,
                 preserve_items=False):
@@ -373,18 +421,11 @@ class VisionEngine:
         if len(body) > MAX_REQUEST_BYTES:
             raise VisionError("Selected pages exceed the local vision request limit. Choose fewer pages or a smaller region.")
         _cancelled(stop)
-        request = urllib.request.Request(self.url, data=body, headers={"Content-Type": "application/json"})
         try:
-            with self.opener.open(request, timeout=self.timeout) as response:
-                raw = response.read(MAX_RESPONSE_BYTES + 1)
-        except urllib.error.HTTPError as exc:
-            detail = exc.read(4096).decode("utf-8", errors="replace")
-            raise _runtime_error(detail, exc.code) from exc
+            raw = self._request(body, stop)
         except (TimeoutError, socket.timeout) as exc:
             raise VisionError("Local vision timed out. Try a smaller region or wait for the model to finish loading, then retry.") from exc
-        except (urllib.error.URLError, ConnectionError, OSError, http.client.HTTPException) as exc:
-            if isinstance(getattr(exc, "reason", None), (TimeoutError, socket.timeout)):
-                raise VisionError("Local vision timed out. Try a smaller region, then retry.") from exc
+        except (ConnectionError, OSError, http.client.HTTPException) as exc:
             raise VisionError("The local vision runtime is unavailable. Start it in Vision setup, then retry; manual entry is available.") from exc
         _cancelled(stop)
         if len(raw) > MAX_RESPONSE_BYTES:

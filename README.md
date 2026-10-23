@@ -171,3 +171,15 @@ Failed vision jobs wait behind remaining queued work, then retry in failure orde
 Inference remains sequential, with one loaded model, an 8,192-token vision context and two-minute keep-alive. Ollama can share model weights across concurrent requests, but context memory grows with parallelism: https://docs.ollama.com/faq#how-does-ollama-handle-concurrent-requests. The development GPU has 6 GB VRAM and currently selects Qwen3-VL 4B. Parallel throughput, latency, memory use and extraction quality need benchmarking before enabling two requests.
 
 Vision classifies new line items from their descriptions into Materials, Tools, Equipment, Outside Labor, Services, Permits & Fees, Utilities, Transportation, Logistics, or Other. Unclear descriptions and unsupported model categories fall back to Materials. Existing manually selected types are preserved, and the review dropdown supports all ten categories. Classification remains subject to human verification.
+
+### Vision wait policy
+
+Local vision waits without an inference read timeout by default. Connection failures,
+runtime errors, malformed responses, and explicit cancellation still stop the job;
+failed jobs retain the existing deferred retry behavior. A connected but hung runtime
+can therefore occupy the queue until you cancel the job or restart the runtime.
+
+To restore the former 180-second read timeout, set
+`RECEIPTIQ_VISION_TIMEOUT_SECONDS=180` in the backend environment and restart it.
+Use `0` (the default) to wait indefinitely. The wait-policy change is isolated in
+its own `fix(vision)` commit so it can also be reverted independently.
