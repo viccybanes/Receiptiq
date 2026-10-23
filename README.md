@@ -168,6 +168,19 @@ Missing Quantity, Unit price, and Amount are completed when the other two values
 
 Failed vision jobs wait behind remaining queued work, then retry in failure order. Each job gets at most three attempts (the initial attempt plus two retries). Persistent failures remain available for manual retry. Cancellation stops deferred retries; retry state survives restart.
 
+### Numeric extraction and quantities
+
+Quantity uses whole numbers. Exact division may fill a missing quantity; a
+fractional result stays unresolved instead of being rounded. Integer-valued legacy
+quantities such as `2.000000` display/save as `2`. Fractional drafts remain editable
+but cannot be verified until corrected.
+
+Vision numeric fields interpret a dot followed by three or more digits as a
+grouping separator (`1.000` becomes `1000`, `2.230` becomes `2230`). Prices and
+amounts retain at most two decimal places (`12.50` remains `12.50`). Separator
+changes appear in the reading notice for human review. Dates, receipt numbers,
+descriptions, and existing manual values are not rewritten by this rule.
+
 Inference remains sequential, with one loaded model, an 8,192-token vision context and two-minute keep-alive. Ollama can share model weights across concurrent requests, but context memory grows with parallelism: https://docs.ollama.com/faq#how-does-ollama-handle-concurrent-requests. The development GPU has 6 GB VRAM and currently selects Qwen3-VL 4B. Parallel throughput, latency, memory use and extraction quality need benchmarking before enabling two requests.
 
 Vision classifies new line items from their descriptions into Materials, Tools, Equipment, Outside Labor, Services, Permits & Fees, Utilities, Transportation, Logistics, or Other. Unclear descriptions and unsupported model categories fall back to Materials. Existing manually selected types are preserved, and the review dropdown supports all ten categories. Classification remains subject to human verification.
@@ -183,16 +196,3 @@ To restore the former 180-second read timeout, set
 `RECEIPTIQ_VISION_TIMEOUT_SECONDS=180` in the backend environment and restart it.
 Use `0` (the default) to wait indefinitely. The wait-policy change is isolated in
 its own `fix(vision)` commit so it can also be reverted independently.
-
-### Numeric extraction and quantities
-
-Quantity uses whole numbers. Exact division may fill a missing quantity; a
-fractional result stays unresolved instead of being rounded. Integer-valued legacy
-quantities such as `2.000000` display/save as `2`. Fractional drafts remain editable
-but cannot be verified until corrected.
-
-Vision numeric fields interpret a dot followed by three or more digits as a
-grouping separator (`1.000` becomes `1000`, `2.230` becomes `2230`). Prices and
-amounts retain at most two decimal places (`12.50` remains `12.50`). Separator
-changes appear in the reading notice for human review. Dates, receipt numbers,
-descriptions, and existing manual values are not rewritten by this rule.
