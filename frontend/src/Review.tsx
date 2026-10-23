@@ -49,6 +49,7 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
   const [photosBusy, setPhotosBusy] = useState(false)
   const [allowRetrieval, setAllowRetrieval] = useState(false)
   const [selecting, setSelecting] = useState(false)
+  const toolsDrawer = useRef<HTMLDetailsElement>(null)
   const [crop, setCrop] = useState<number[] | null>(null)
   const cropStart = useRef<number[] | null>(null)
   const [pageGroups, setPageGroups] = useState('')
@@ -222,6 +223,14 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
     finally { setBusy(false) }
   }
 
+  function fitImage(size = imageSize) {
+    const stage = imageStage.current
+    if (!stage) return
+    const ratio = viewRotation % 180 ? size[1] / size[0] : size[0] / size[1]
+    setZoom(Math.max(10, Math.min(100, Math.floor((stage.clientHeight - 40) * ratio / (stage.clientWidth - 40) * 100))))
+    stage.scrollTo({ left: 0, top: 0 })
+  }
+
   function rotatePreview() {
     const next = (viewRotation + 90) % 360
     localStorage.setItem('receiptiq-rotation-' + id, String(next))
@@ -261,23 +270,22 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
       <div className="panel-title"><h2><FileImage size={17} /> Original receipt</h2>
         <button className="icon-button" title="Download untouched original" aria-label="Download original"
           onClick={() => void download('/receipts/' + id + '/original', receipt.original_name).catch((e: Error) => onError(e.message))}>
-          <ArrowDownToLine size={16} /></button></div>
+          <ArrowDownToLine size={16} /></button>
+        <button aria-label="Delete receipt" title={pending ? 'Wait for processing to finish before deleting' : 'Delete this receipt'}
+          disabled={pending || busy || photosBusy} onClick={() => void deleteReceipt()}><Trash2 size={16} /> Delete</button>
+      </div>
       <div className="image-toolbar">
         <select aria-label="Image version" value={variant} disabled={directPhoto} onChange={e => setVariant(e.target.value)}>
           <option value="processed">Enhanced image</option><option value="original">Source image</option>
         </select>
-        <button className="icon-button" aria-label="Zoom out" disabled={zoom <= 50} onClick={() => setZoom(zoom - 25)}><ZoomOut size={16} /></button>
+        <button className="icon-button" aria-label="Zoom out" disabled={zoom <= 10} onClick={() => setZoom(Math.max(10, zoom - 25))}><ZoomOut size={16} /></button>
         <span>{zoom}%</span>
         <button className="icon-button" aria-label="Zoom in" disabled={zoom >= 250} onClick={() => setZoom(zoom + 25)}><ZoomIn size={16} /></button>
-        <button onClick={() => {
-          setZoom(100)
-          imageStage.current?.scrollTo({ left: 0, top: 0 })
-        }}>Reset view</button>
+        <button aria-label="Reset view" title="Fit the whole receipt" onClick={() => fitImage()}>Fit</button>
         <button aria-label="Rotate preview clockwise" title="Rotate preview 90 degrees without rerunning OCR"
           disabled={!image}
           onClick={rotatePreview}><RotateCw size={16} /> Rotate</button>
-        <button aria-label="Delete receipt" title={pending ? 'Wait for processing to finish before deleting' : 'Delete this receipt'}
-          disabled={pending || busy || photosBusy} onClick={() => void deleteReceipt()}><Trash2 size={16} /> Delete</button>
+
       </div>
       <div ref={imageStage} className={'image-stage' + (image && !selecting ? ' pannable' : '') + (panning ? ' panning' : '')}
         tabIndex={0} role="region" aria-label="Receipt preview: zoom then drag to pan, or use arrow keys"
@@ -304,7 +312,10 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
             width: (viewRotation % 180 ? imageSize[0] / imageSize[1] * 100 : 100) + '%',
             transform: `translate(-50%, -50%) rotate(${viewRotation}deg)` }}>
           <img src={image} draggable={false} alt={'Receipt page ' + (page + 1)}
-            onLoad={event => setImageSize([event.currentTarget.naturalWidth, event.currentTarget.naturalHeight])} />
+            onLoad={event => {
+              const size = [event.currentTarget.naturalWidth, event.currentTarget.naturalHeight]
+              setImageSize(size); fitImage(size)
+            }} />
           {!directPhoto && currentPage && variant === 'processed' && highlighted.length > 0 && <svg className="evidence-overlay" viewBox={'0 0 ' + currentPage.width + ' ' + currentPage.height}
             aria-label="Highlighted OCR source">
             {highlighted.map(line => <rect key={line.id} x={line.box[0]} y={line.box[1]} width={line.box[2] - line.box[0]}
@@ -338,6 +349,12 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
       <div className="page-bar"><button aria-label="Previous page" disabled={page === 0} onClick={() => setPage(page - 1)}><ChevronLeft size={15} /></button>
         <span>Page {receipt.pages.length ? page + 1 : 0} of {receipt.pages.length}</span>
         <button aria-label="Next page" disabled={page + 1 >= receipt.pages.length} onClick={() => setPage(page + 1)}><ChevronRight size={15} /></button></div>
+      <div className="preview-hint">{selecting ? 'Drag a region, then open tools to read it.' : 'Drag to move the image. Use zoom for a closer look.'}</div>
+      <details className="receipt-tools" ref={toolsDrawer}>
+      <summary>Vision, OCR &amp; review tools <span>{receipt.vision_job?.state === 'processing' ? 'Vision is reading...' :
+        receipt.vision_job?.state === 'queued' ? 'Vision queued' : receipt.vision_job?.state === 'failed' ? 'Vision needs attention' :
+        receipt.candidate?.auto_applied ? 'Vision applied' : 'Read, retrieve & assign'}</span></summary>
+      <div className="receipt-tools-body">
       <button disabled={pending || busy || photosBusy} onClick={async () => {
         setBusy(true)
         try {
@@ -377,7 +394,7 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
         }}>Create grouped receipts</button>
       </details>}
       <ReceiptAssistance receipt={receipt} draft={draft} pageId={directPhoto ? undefined : currentPage?.id} crop={crop}
-        onSelectRegion={() => { setSelecting(value => !value); setVariant('processed') }}
+        onSelectRegion={() => { setSelecting(value => !value); setVariant('processed'); if (toolsDrawer.current) toolsDrawer.current.open = false }}
         saveDraft={async () => { await saveBeforeLeave.current?.() }}
         onReceipt={result => { setReceipt(result); onChanged() }}
         onApplied={result => {
@@ -385,8 +402,9 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
           revision.current = result.revision; saved.current = JSON.stringify(result.data)
           setSaveState('Saved locally'); setAcknowledged(new Set()); setReason(''); onChanged()
         }} onChange={change} onBusy={setBusy} onError={onError} onOpenReceipt={onOpenReceipt} />
+      </div></details>
     </section>
-    <section className="fields-panel" aria-label="Receipt review">
+    <section className="fields-panel" id="receipt-details" tabIndex={-1} aria-label="Receipt review">
       <div className="panel-title"><h2>Receipt details</h2><span className={'save-state ' + (saveState.startsWith('Save failed') ? 'save-error' : '')} aria-live="polite">
         {saveState === 'Saved locally' ? <Check size={13} /> : <Save size={13} />}{saveState}</span></div>
       <div className="review-intro"><span className={'review-state ' + (receipt.status === 'verified' ? 'is-verified' : '')}>

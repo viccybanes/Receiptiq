@@ -23,6 +23,7 @@ export default function App() {
   const [receipts, setReceipts] = useState<Summary[]>([])
   const [selected, setSelected] = useState('')
   const [filter, setFilter] = useState('all')
+  const [search, setSearch] = useState('')
   const [assigneeFilter, setAssigneeFilter] = useState('')
   const [priority, setPriority] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -192,7 +193,7 @@ export default function App() {
     return result
   }, {})
   const verified = receipts.filter(r => r.status === 'verified')
-  const visible = receipts.filter(r => (filter === 'all' || (filter === 'second_review' ? r.second_review : r.status === filter))
+  const visible = receipts.filter(r => (!search.trim() || (r.original_name + ' ' + r.data_json).toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())) && (filter === 'all' || (filter === 'second_review' ? r.second_review : r.status === filter))
     && (!assigneeFilter || (assigneeFilter === '__unassigned__' ? !r.assignee : r.assignee === assigneeFilter)))
   if (priority) visible.sort((left, right) => {
     const rank = (row: Summary) => (row.second_review ? 8 : 0) + (row.status === 'failed' ? 6 : 0) +
@@ -229,6 +230,7 @@ export default function App() {
   return <div className="app" onDragOver={e => { e.preventDefault(); if (!uploading) setDragging(true) }}
     onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false) }}
     onDrop={e => { e.preventDefault(); setDragging(false); void uploadFiles([...e.dataTransfer.files]) }}>
+    <a className="skip-review" href={selected ? '#receipt-details' : '#receipt-workspace'}>Skip to receipt review</a>
     <header className="app-header">
       <a className="brand" href="/" aria-label="ReceiptIQ home"><span className="brand-mark"><ReceiptText size={24} /></span>
         Receipt<span>IQ</span></a>
@@ -239,9 +241,9 @@ export default function App() {
         try { await saveBeforeLeave.current?.(); setSettingsOpen(true) } catch (e) { setError((e as Error).message) }
       }}><Settings size={16} /> Settings</button>
     </header>
-    <main>
+    <main id="receipt-workspace" tabIndex={-1}>
       <div className="workspace-heading">
-        <div><h1>Add expense</h1><p>Record a receipt with one or more line items. Each line gets its own item number on save.</p></div>
+        <div><h1>Add expense</h1><p>Compare. Correct. Verify.</p></div>
         <button disabled={!ready || uploading} onClick={() => importInput.current?.click()}>Import CSV + photos</button>
         <input ref={importInput} type="file" multiple accept=".csv,.zip,image/jpeg,image/png,application/pdf"
           className="visually-hidden" aria-label="Choose CSV or ZIP and optional photos"
@@ -257,8 +259,8 @@ export default function App() {
       {error && <div role="alert" className="notice error"><span>{error}</span>
         <button aria-label="Dismiss error" onClick={() => setError('')}><X size={16} /></button></div>}
       {importMessage && <div className="notice" role="status">{importMessage}</div>}
-      <p className="import-help">Import one CSV with its referenced photos selected together, or one ZIP containing both.
-        CSV alone stores image filenames; CSV + photos export includes the files.</p>
+      <details className="import-help"><summary>Import formats &amp; help</summary><p>Import one CSV with its referenced photos selected together, or one ZIP containing both.
+        CSV alone stores image filenames; CSV + photos export includes the files.</p></details>
       {!modelsReady && <div className="notice warning"><FileText size={18} />
         <span>OCR models aren’t installed. Open Settings → Local models to finish setup, then retry failed receipts.
           Manual entry remains available.</span></div>}
@@ -298,6 +300,8 @@ export default function App() {
           <div className="panel-title"><h2>Receipts <span>{receipts.length}</span></h2>
             <button className="queue-toggle quiet" onClick={() => setQueueOpen(!queueOpen)}>{queueOpen ? 'Hide' : 'Show'}</button></div>
           <div className="queue-content">
+            <label className="queue-search"><span>Find a receipt</span><input type="search" value={search}
+              placeholder="Vendor, number or filename" onChange={event => setSearch(event.target.value)} /></label>
             <label className="visually-hidden" htmlFor="status-filter">Filter receipt status</label>
             <select id="status-filter" value={filter} onChange={e => setFilter(e.target.value)} className="filter">
               <option value="all">All statuses</option>
@@ -322,7 +326,7 @@ export default function App() {
                     checked={exportIds.has(receipt.id)} onChange={e => setExportIds(current => {
                       const next = new Set(current); if (e.target.checked) next.add(receipt.id); else next.delete(receipt.id); return next
                     })} /> : <span className="row-index">{String(index + 1).padStart(2, '0')}</span>}
-                  <button className="receipt-select" data-receipt-id={receipt.id} onClick={() => void chooseReceipt(receipt.id)}>
+                  <button className="receipt-select" data-receipt-id={receipt.id} aria-current={selected === receipt.id ? 'true' : undefined} onClick={() => void chooseReceipt(receipt.id)}>
                     <span className="receipt-name">{data.supplier || receipt.original_name}</span>
                     <span className="receipt-file">{receipt.original_name}</span>
                     {receipt.assignee && <span className="receipt-file">Assigned to {receipt.assignee}</span>}
@@ -337,7 +341,7 @@ export default function App() {
                   <ChevronRight size={14} className="row-chevron" />
                 </div>
               })}
-              {!visible.length && <p className="queue-empty">No receipts with this status.</p>}
+              {!visible.length && <p className="queue-empty">No receipts match these filters.</p>}
             </div>
             <div className="queue-footer"><ShieldCheck size={14} /> Originals and edits stay local.</div>
           </div>

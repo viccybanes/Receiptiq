@@ -22,7 +22,11 @@ try {
     { }, { timeout: 120000 })
   const dimensions = () => page.locator('.image-panel img').evaluate(image => { const box = image.getBoundingClientRect(); return [Math.round(box.width), Math.round(box.height)] })
   const imageHash = () => page.locator('.image-panel img').evaluate(async image => {
-    const bytes = await (await fetch(image.src)).arrayBuffer()
+    const canvas = document.createElement('canvas')
+    canvas.width = image.naturalWidth; canvas.height = image.naturalHeight
+    const context = canvas.getContext('2d')
+    context.drawImage(image, 0, 0)
+    const bytes = context.getImageData(0, 0, canvas.width, canvas.height).data
     return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)))
   })
   await page.waitForFunction(() => document.querySelector('.image-panel img')?.naturalWidth > 0)
@@ -36,14 +40,19 @@ try {
   await page.waitForTimeout(500)
   assert.equal(processingRequests.length, 0, 'Preview rotation must never request OCR')
   const after = await dimensions()
+  const savedTransform = await page.locator('.image-panel img').evaluate(image => image.parentElement.style.transform)
   const savedPixels = await imageHash()
   assert.equal(after[0] > after[1], before[0] < before[1], 'Preview must show saved rotation before reload')
   await page.reload()
   await page.locator(`[data-receipt-id="${receiptId}"]`).click()
   await page.waitForFunction(() => document.querySelector('.image-panel img')?.naturalWidth > 0)
-  assert.deepEqual(await dimensions(), after, 'Reload must preserve displayed orientation')
+  const reloaded = await dimensions()
+  assert.equal(reloaded[0] > reloaded[1], after[0] > after[1], 'Reload must preserve displayed orientation')
+  // Fit-to-view may choose a different size when the latest-upload toolbar disappears.
+  assert.equal(await page.locator('.image-panel img').evaluate(image => image.parentElement.style.transform), savedTransform)
   // Dimensions alone cannot detect a 180-degree flip or mirrored image.
   assert.deepEqual(await imageHash(), savedPixels, 'Reload must preserve the exact displayed pixels')
+  await page.locator('.receipt-tools > summary').click()
   await page.getByRole('button', { name: 'Select region', exact: true }).click()
   const overlay = page.getByRole('img', { name: 'Drag to select receipt region' })
   await overlay.scrollIntoViewIfNeeded()

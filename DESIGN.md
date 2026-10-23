@@ -272,3 +272,13 @@ Motion is limited to a 1.5-second linear spinner for active work. Reduced-motion
 - **Don't** communicate unread, reading, failed, or verified state through color alone.
 - **Don't** present a vision suggestion as a verified receipt or similarity as extraction accuracy.
 - **Don't** copy historical prices into a current receipt through saved examples.
+
+## UI overhaul branch
+
+The `ui-overhaul` branch introduces a review-first workspace. `workspace.css` overrides the base presentation without changing receipt storage or API contracts. Navy navigation (#182b3b), white editing surfaces, slate supporting text (#526575), and green primary actions (#176454) retain a restrained desktop character. System fonts and local icons preserve offline operation.
+
+Desktop uses the available viewport: searchable receipt queue, image viewer, independently scrolling details, and persistent export actions. The image toolbar includes Fit, zoom and rotation; destructive deletion is separated into the heading. Vision/OCR, retrieval, assignment, and PDF controls remain in an expandable drawer. At smaller widths, panels stack without horizontal page overflow. Mobile fields use 16px text and 44px controls. Keyboard focus, skip-to-review, native dialogs and reduced-motion settings remain supported.
+
+Validation uses synthetic receipts in an isolated workspace. Run `.venv\Scripts\python.exe scripts/ui_qa_server.py` in one terminal, then `cd frontend` and `node tests/uiOverhaul.mjs` in another. Build first with `npm --prefix frontend run build`. The QA server uses port 8766 and temporary data; it never opens the user's database or downloads models. Screenshots and test exports go into ignored `artifacts/`.
+
+Rollback: switch to `main` and rebuild the frontend (or let Vite reload). No migrations or backend changes are part of this branch. The installer is not rebuilt. Existing unrelated local edits are excluded from the branch commits.
