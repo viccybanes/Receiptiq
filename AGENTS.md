@@ -1,5 +1,7 @@
 # ReceiptIQ project rules
 
+- Read [CONTEXT.md](CONTEXT.md) for the current handoff, behavior changes, branch boundaries, validation, and operational cautions before making changes.
+
 - Preserve the original four-milestone plan in PLAN.md and workplace details below.
 - React/TypeScript, Python/FastAPI, SQLite, local PaddleOCR and Ollama vision. Tauri owns Windows distribution. No cloud AI, paid API, or n8n.
 - Primary workload is tens of receipt images per batch. Keep processing bounded, durable, and independent from human review.

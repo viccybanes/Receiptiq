@@ -1,0 +1,160 @@
+# ReceiptIQ agent handoff
+
+Updated 2026-10-23. Implementation snapshot: `main` at `d457240` before this documentation commit. Recheck Git and running processes before acting; this is not a live service-status report.
+
+## Start here
+
+1. Work in `C:\Users\ruthl\Desktop\Codink\ReceiptIQ`, not the adjacent `Frutiger Aero` project. Remote: `https://github.com/viccybanes/Receiptiq.git`.
+2. Read `AGENTS.md`, this file, then the relevant source. This file records current behavior; `PLAN.md` preserves the original four milestones and their release gates. Earlier manual-only vision statements in planning/product documents are superseded by the upload behavior below.
+3. Check `git status --short` and the branch. Preserve user edits. At handoff, `AGENTS.md` and `PRODUCT.md` already had user changes; `.vscode/` and `ReceiptIQ-PLAN.md` were untracked user files. Do not stage them wholesale.
+4. Implement and validate requested work end to end. Use focused changes, existing utilities, Conventional Commits (`feat`, `fix`, `docs`, etc.), and push completed work to the configured remote. Never rewrite published history just to tidy names.
+5. The active conversation asks to address the user as **bro**; assistant name **Chae**. Keep reports concise, warm, and honest. Explicit current user instructions take precedence over older wording in files.
+
+## Product and boundaries
+
+ReceiptIQ is a distributable, local Windows receipt-processing application. Its main challenge is hard-to-read handwriting. Users upload **tens of images per batch**, compare images with editable fields, correct and verify receipts, then export workplace CSV files. Printed, handwritten, and mixed receipts are supported, with manual entry always available.
+
+- Stack: React + TypeScript + Vite; Python + FastAPI; SQLite; Pillow/OpenCV/PDF rendering; CPU PaddleOCR; local Ollama Qwen3-VL; Tauri Windows host and PyInstaller backend bundle.
+- No n8n, paid AI API, cloud fallback, or mandatory network access after setup/model downloads. End users need no Python installation.
+- Development hardware supplied by the user: Windows 11, i7-12700H, RTX 3060 Laptop GPU, 16 GB RAM. Earlier measured GPU memory was 6 GB; verify live hardware/settings before capacity claims.
+- One receipt per uploaded image/document by default. PDFs can contain multiple pages and support explicit page grouping/splitting. Do not assume automatic splitting of several receipts photographed together.
+- All four milestone implementations exist: (1) ingestion/OCR/review/CSV, (2) local vision, (3) local retrieval and review/batch tools, (4) Windows packaging/setup/recovery. This does **not** mean all distribution or accuracy gates have passed.
+- Existing version 0.4.0 installer is an unsigned preview built before the recent source changes. No auto-update feed is configured. A source build/push does not update an installed executable.
+
+## Current processing behavior on main
+
+1. Multi-file uploads transfer individually, persist accepted originals/jobs, retain the current review page, and show animated uploading placeholders. Corrupt files fail independently. Accepted jobs survive restart.
+2. Default uploads prepare previews, **queue vision automatically**, and process it sequentially. Automatic OCR is disabled; **Run OCR** remains available. Explicit API `auto_ocr=true` retains the OCR path.
+3. The worker uses the configured allowlisted vision profile (`qwen3-vl:2b-instruct` or `qwen3-vl:4b-instruct`). Automatic full-receipt vision is limited to six pages; oversized inputs produce an actionable failure.
+4. Upload vision is automatically applied only while the receipt remains unverified and its revision matches the queued/start revision. Intervening human edits are preserved; the result remains a suggestion instead. Every result retains provenance, and automatic application is audited.
+5. Manually requested page/crop vision remains an explicit suggestion/application workflow. Never auto-verify a receipt.
+6. A failed vision job goes behind remaining queued work. Retries run in failure order, up to **three attempts total**. Persistent failures remain available for manual retry. Cancellation stops further retries; retry state is durable.
+7. Human verification is required before export and retrieval eligibility. Changes to verified values invalidate that eligibility until verified again. Revision checks reject stale saves/applications.
+
+Heavy OCR, vision, and indexing share one worker. The user explicitly rejected concurrent Qwen inference after considering memory costs. Keep `OLLAMA_NUM_PARALLEL=1` and `OLLAMA_MAX_LOADED_MODELS=1`; the vision request uses an 8192-token context and two-minute model keep-alive. Do not enable concurrency as an unsolicited optimization.
+
+### Reversible vision wait policy
+
+Commit **`2b3de0b`** removes the default 180-second inference read timeout. Local connection/write setup remains bounded at five seconds. Socket reads poll for cancellation, including while waiting for headers or the body; this avoids Windows blocking-receive cancellation problems. Connection failures, runtime errors, invalid/oversized replies, and cancellation still stop a request.
+
+- Default: `RECEIPTIQ_VISION_TIMEOUT_SECONDS=0` (unlimited inference read wait).
+- Restore the old read limit: set `RECEIPTIQ_VISION_TIMEOUT_SECONDS=180` in the backend process environment, then restart that backend.
+- Code rollback: `git revert 2b3de0b`. An independent reverse-patch check passed after the subsequent numeric changes. Check again if later edits touch the same code.
+- A connected but hung runtime cannot reliably be distinguished from a slow model; it can occupy the queue until cancelled or restarted. Do not claim crash-only failure detection or guaranteed completion.
+- This setting affects vision reads, not embedding, setup/download, or other request timeouts.
+
+## Extraction and expense rules
+
+Use the user's exact form wording:
+
+- Receipt details: **Purchase date, Vendor, Receipt number, Receipt photo, Notes**.
+- Line items: **Description, Quantity, Unit, Unit price, Amount, Type, Photo of item purchased**.
+- Item photos are optional. Receipt photo comes from the uploaded original. The review UI has no **Replace photo** control. Do not restore Tax/Subtotal/Discount controls; legacy stored fields remain for compatibility.
+- Purchase date is **MM/DD/YYYY** in the form, ISO internally. CSV templates control exported date format. Normalize only unambiguous extracted dates; do not guess ambiguous month/day/year.
+- Vendor detection favors the seller's heading near the top, excluding customer names, contact details, receipt titles, and item rows.
+- Join distinct receipt identifiers in source order, retaining leading zeroes: `TRANS #: 00-0045` and `SI #: 00-0029` become `00-0045 / 00-0029`.
+- Vision may resolve ambiguous **handwritten ordinary words** from the image and context, e.g. PIVUT/PIVOT. Preserve printed spelling, brands, abbreviations, and product codes; unfamiliar text alone is not proof of an error. Do not hardcode sample-receipt guesses as ground truth.
+- Numeric AI fields interpret a dot followed by **three or more digits** as grouping: `1.000` becomes `1000`, `2.230` becomes `2230`; `12.50` stays `12.50`. The deterministic adapter normalizes proposed numeric fields, limits proposed money to two decimal places, and adds review notices for changed/rejected readings. It does not rewrite dates, receipt codes, descriptions, or existing manual values.
+- Quantity is a whole number. Integer-valued legacy strings such as `2.000000` normalize to `2`; genuinely fractional drafts remain editable but block verification. Storage remains strings to support blank/invalid drafts and exact arithmetic, rather than changing the database to floating point.
+- Missing Quantity/Unit price/Amount are completed from sufficient arithmetic context. Quantity division must be exact; never round a fractional result into an invented count. A missing Total is filled only if every line has a valid Amount.
+- Live edits update derived amounts and matching totals. Preserve independently written amounts/totals that differ: they may represent implicit discounts. Explicit discount allocation is a separate human-confirmed action. Its effective unit-price precision is not the same as the two-decimal AI-reading policy.
+- Category choices: **Materials, Tools, Equipment, Outside Labor, Services, Permits & Fees, Utilities, Transportation, Logistics, Other**. Vision classifies new items by description; uncertain/unsupported categories default to Materials. Preserve matched existing manual categories; legacy values remain displayable.
+
+## Review and export behavior
+
+- The receipt list shows **vendor only**, with **Unknown vendor** when missing. No image filename as a title/subtitle or upload-placeholder title. Status, assignment, duplicate warnings, and other operational indicators remain.
+- The receipt selector groups by local **day**, not individual upload timestamp.
+- Receipt details scroll independently of the image. The image pans by dragging, supports zoom/reset and crop selection, and hides scrollbars. Crop selection must remain aligned after preview rotation.
+- Preview rotation is **view-only** and persists in browser localStorage under `receiptiq-rotation-<id>`. It must not restart OCR or mutate the original image. It is not a cross-browser/device preference.
+- Delete uses confirmation. Duplicate detection warns about identical originals rather than silently deleting/rejecting them.
+- Reviewer labels, assignment, second-review flags, review filters, and keyboard shortcuts support same-workspace handoff. These are not authenticated accounts or access controls.
+- Default CSV has one row per item, repeating receipt fields. Do not sum repeated receipt totals across rows. Versioned templates configure columns/formats. Python CSV quoting and spreadsheet formula protection remain required.
+- CSV itself cannot attach image bytes. CSV + photos exports a ZIP with relative paths to receipt originals/PDFs and optional item photos. Import supports CSV with selected photos or a ZIP; imported receipts require verification.
+- The destination workplace app has **no CSV importer yet**. The user accepted a proper documented CSV/ZIP format for that app to implement later; no destination API integration is required.
+
+## RAG: implemented versus discussed
+
+Retrieval is **local and opt-in**, using `embeddinggemma:300m-qat-q4_0`, 256-dimensional vectors in SQLite, and a bounded cosine scan of up to 10,000 eligible entries. SQLite is authoritative; vectors are rebuildable. No separate Chroma server is needed.
+
+Only current, explicitly opted-in verified receipts/wording corrections are eligible. Edited, deleted, opted-out, superseded, self-source, or second-review records must not leak through stale vectors. Index failures must not undo verification or block export. Retrieved examples supply wording/context, never historical prices, quantities, dates, or totals as facts about a new receipt.
+
+Feed RAG by correcting, verifying, and explicitly allowing receipts for future suggestions. This **does not train model weights** or improve another PC automatically. Global RAG was discussed but is **not implemented**; any sharing needs separate consent, privacy/authentication, and synchronization design. Never silently upload receipts.
+
+There is no proven receipt count that makes handwriting nearly automatic. Evaluate held-out receipts/writers, critical numeric errors, correction time, and zero-correction rate. Synthetic cursive fonts and unit tests are not real-handwriting accuracy evidence.
+
+## Code map
+
+| Area | Files |
+|---|---|
+| Queue, uploads, selection, export UI | `frontend/src/App.tsx` |
+| Editing, preview transforms, vision/review controls | `frontend/src/Review.tsx` |
+| Exact live arithmetic and date display | `frontend/src/amount.ts`, `frontend/src/purchaseDate.ts` |
+| Layout and styling | `frontend/src/style.css`; UI branch adds `workspace.css` |
+| API/session/endpoints | `backend/app/main.py`, `features.py`, `models.py` |
+| SQLite, revisions, queue/data lifecycle | `backend/app/db.py`, `service.py`, `worker.py` |
+| Vision prompt, image payload, numeric policy, transport | `backend/app/vision.py` |
+| OCR, preprocessing, parsing, validation/discounts | `backend/app/ocr.py`, `imaging.py`, `extraction.py` |
+| Verified-example index/retrieval | `backend/app/retrieval.py` |
+| CSV templates and photo transfer | `backend/app/templates.py`, `transfer.py` |
+| Hardware, model setup/runtime, workspace recovery | `backend/app/system.py`, `backups.py` |
+| Desktop distribution | `src-tauri/`, `packaging/`, `scripts/package.ps1`, `scripts/build_installer.ps1` |
+| Tests/evaluations | `backend/tests/`, `frontend/tests/`, `scripts/evaluate_*.py` |
+
+API base is `/api/v1` on authenticated loopback. Keep authorization, owned-file checks, bounded input sizes, revision guards, and safe archive import. Original images, verified revisions, audits, CSV snapshots, and user data must survive updates.
+
+## Branches and significant changes
+
+- **`main`** is the active branch for the latest requested fixes. Remote head at this snapshot: `d457240` (vendor-only receipt titles).
+- **`ui-overhaul`** at `33cde4d` is a separate, pushed, **unmerged** ergonomic redesign. Git cannot use the requested space-containing name `UI overhaul`. It adds a searchable queue, viewport layout, fitted preview, expandable tools drawer, responsive/accessibility improvements, and isolated GUI QA helpers. Its base predates the latest timeout/numeric/title fixes; do not switch to it and assume those fixes exist. Reconcile both branches deliberately when asked to merge.
+- `1ac10f7`: AI numeric normalization and integer quantities.
+- `2b3de0b`: independently reversible unlimited/cancellable vision wait; `e43f2bd` keeps its documentation rollback independent.
+- `23ab28e`: description-based workplace categories.
+- `2d64577`: deferred failed-vision retries.
+- `a15f3f0`: sequential automatic upload vision/application.
+- `45f032e`, `dcc1741`: independent details scrolling/drag pan; date/arithmetic/upload workflow and opt-in OCR.
+
+## Development, data safety, and checks
+
+Run from the repository root in PowerShell:
+
+```powershell
+.\scripts\setup.ps1                  # First setup only; downloads dependencies/assets
+npm --prefix frontend run build
+.\scripts\start.ps1                  # Backend/static UI on 127.0.0.1:8765
+# In another terminal, frontend hot reload on 127.0.0.1:5173:
+npm --prefix frontend run dev
+```
+
+Vite proxies `/api` to port 8765. App-managed Ollama normally uses 11435; do not interfere with an independently installed Ollama on 11434. Backend Python changes require a backend restart; Vite handles frontend source changes. A build on one branch can leave static assets from that branch after switching: rebuild when testing the other branch's static UI.
+
+Default receipt data is outside the install directory, under `%LOCALAPPDATA%\ReceiptIQ`, unless configured otherwise. `RECEIPTIQ_DATA_DIR` selects an explicit workspace. **`artifacts/dev-workspace` contains user receipts and is not disposable**, despite being Git-ignored. Do not reset or delete it. Prior `artifacts/dev-session.json`/process IDs may be stale; inspect before managing a process. Avoid forced restarts during active receipt work.
+
+Use a fresh temporary workspace and synthetic fixtures for mutating/browser tests. Clean up only IDs created by that test. Some existing browser scripts target port 5173 and can operate on the running workspace: inspect them first. The `ui-overhaul` branch has `scripts/ui_qa_server.py` and `frontend/tests/uiOverhaul.mjs`; these files are not on `main`. Do not assume port 8766 or any prior QA process is still running.
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest backend/tests -q
+.\.venv\Scripts\ruff.exe check backend
+npm --prefix frontend run build
+node frontend/tests/amount.mjs
+node frontend/tests/amountCompletion.mjs
+node frontend/tests/purchaseDate.mjs
+node frontend/tests/receiptDays.mjs
+git diff --check
+```
+
+The commands are reproducibility guidance, not a claim they were all rerun for this documentation change. Packaging and real OCR/vision/retrieval evaluators have additional workspace/model requirements; inspect their arguments and `README.md` first. Do not commit receipts, generated artifacts, caches, credentials, or installed bundles.
+
+## Validation and remaining work
+
+Executed during the latest implementation work on 2026-10-23:
+
+- Full backend suite: **204 passed** (107.54s), with one existing Starlette/AnyIO deprecation warning. Includes slow inference, cancellation before headers/during body, runtime disconnect, configurable timeout, numeric normalization, and fractional-quantity verification blocking.
+- Relevant changed Python files passed Ruff. Frontend TypeScript/Vite build, decimal Amount checks, and whole-quantity/live arithmetic checks passed.
+- Isolated browser check passed: fractional quantity input rejected, whole-number edit updates Amount, save survives reload.
+- After `d457240`, production build and isolated mocked-list browser check passed: vendor-only titles and Unknown vendor fallback, with no image filenames. The full backend suite was not rerun for that frontend-only title edit.
+- UI branch previously passed its own responsive review/export/settings workflows and rotation/crop checks. Those results do not mean the branch is merged or include the later fixes.
+- Recent numeric/prompt changes were tested deterministically, **not benchmarked against a real handwriting corpus**. See `VALIDATION.md` for older real OCR, small synthetic vision/RAG, and installer checks with their exact limitations.
+
+Still unproven/release work: clean Windows installation on an independent machine, separate CPU-only vision, representative 4B quality/memory benchmarks, older-installer upgrade preservation, signed distribution/updates, and real handwriting evaluation. The recent code was not repackaged into a new installer. Global RAG and cross-computer reviewer accounts remain separate future projects.
+
+No further feature implementation was pending from the conversation at this handoff; the current request is to preserve context. Continue from the user's next request rather than inventing a new milestone.

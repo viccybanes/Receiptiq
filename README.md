@@ -1,5 +1,7 @@
 # ReceiptIQ
 
+New contributors and coding agents: start with [CONTEXT.md](CONTEXT.md) for current behavior, branch status, validation, and development handoff notes.
+
 ReceiptIQ turns batches of receipt images into editable local records and verified CSV exports. Version 0.4.0 adds optional local vision, opt-in retrieval, reviewer handoff, CSV formats, backups, and a Windows desktop installer. This is an unsigned preview; see [VALIDATION.md](VALIDATION.md) for measured checks and remaining release gates.
 
 ## Windows desktop
