@@ -1,5 +1,11 @@
 # ReceiptIQ validation
 
+## Vision unit and row checks — 2026-10-25
+
+- Backend: **273 tests passed** (110.63s), with one existing Starlette/AnyIO deprecation warning. Changed Python files passed Ruff and `git diff --check`.
+- Mocked local-runtime checks cover combined quantity/unit readings, conflicting units, fractional quantities, preservation of current data, one sequential image recheck on row-count mismatch, unresolved/unknown-count notices, and cancellation. The recheck resubmits the same selected images and returns a complete suggestion; it adds inference time only when the first audit finds a mismatch.
+- These are deterministic adapter checks, not a new real-handwriting benchmark. Counts remain model-reported: matching counts cannot prove that every image row was read. The prompt now checks units beside quantities and scans occupied item rows from bottom to top, including faint, ditto, and final rows.
+
 ## Version 0.4.0 — milestones 2–4
 
 Executed October 19–20, 2026 on the development Windows 11/NVIDIA laptop. This preview extends the milestone-1 evidence retained below. Small synthetic evaluations do not establish real-world receipt or handwriting accuracy.

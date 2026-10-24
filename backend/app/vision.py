@@ -60,7 +60,10 @@ Rows:
   flag the uncertain description in reading_notes rather than guessing or dropping the row.
 - Return visible_item_count, or null if boundaries are unclear. Keep partly
   readable rows with uncertain fields blank. Report wholly unreadable rows for review.
-- Before returning, re-scan the image for skipped rows and compare with items.
+- Before returning, re-scan the image from the last item upward, matching every
+  occupied item row to one output item. Check faint, short, ditto, and final rows
+  on every page. Count independently from the output list, then compare with items.
+  Re-read discrepancies and add supported missing rows or remove unsupported rows.
   Never fabricate rows or values to satisfy a count.
 - Follow column alignment; do not move numeric values between rows or columns. Preserve
   legible dimensions, inch marks, and model codes without guessing overwritten text.
@@ -81,8 +84,12 @@ Receipt fields:
 Item fields and numbers:
 - Return description, quantity, unit, unit_price, line_total (Amount), item_type,
   and item_number=null. Separate quantity from unit: quantity is a whole-number
-  string without unit text. Leave absent or unreadable units empty; x and @ are
-  multiplication markers, not units. The app supplies the default unit.
+  string without unit text. Read the unit beside the quantity, even when joined
+  to its digits or sharing the Quantity column; also check a dedicated Unit column.
+  Preserve the visible unit/abbreviation separately from the number. Before returning,
+  recheck every empty unit against its quantity cell. Do not infer units from the
+  product or copy another row's unit. Leave genuinely absent/unreadable units empty;
+  x and @ are multiplication markers, not units. The app supplies the default unit.
 - Money uses decimal strings with at most two decimal places, without currency
   symbols or grouping separators. In numeric fields, a dot followed by three or
   more digits is grouping; one or two digits after a dot are decimal places.
@@ -301,6 +308,46 @@ def _numeric_value(key, value):
     return value if re.fullmatch(r"-?\d+(?:\.\d{1,2})?", value) else ""
 
 
+def _normalize_candidate(candidate):
+    """Keep explicit quantity/unit pairs before validating the numeric fields."""
+    notices = []
+    numeric_fields = [(candidate, "total", "Total")]
+    for index, item in enumerate(candidate.items):
+        pair = re.fullmatch(r"(-?[\d.,]+)\s*([A-Za-z]+\.?)", item.quantity.strip())
+        if pair and _numeric_value("quantity", pair[1]) and pair[2].casefold() != "x":
+            unit = item.unit.strip().casefold().rstrip(".")
+            if unit in ("", "unit", pair[2].casefold().rstrip(".")):
+                original = item.quantity
+                item.quantity = pair[1]
+                if unit in ("", "unit"):
+                    item.unit = pair[2]
+                notices.append(f"Line {index + 1}: separated Quantity {item.quantity} and Unit {item.unit} "
+                               f"from {original}; check the original.")
+        numeric_fields.extend((item, key, f"Line {index + 1} {label}") for key, label in
+                              (("quantity", "Quantity"), ("unit_price", "Unit price"), ("line_total", "Amount")))
+    for owner, key, label in numeric_fields:
+        original = getattr(owner, key)
+        normalized = _numeric_value(key, original)
+        if original and original != normalized:
+            notices.append(f"{label}: interpreted {original} as {normalized}; check the original."
+                           if normalized else f"{label}: invalid numeric reading {original}; check the original.")
+        setattr(owner, key, normalized)
+    return notices
+
+
+def _row_audit(candidate, crop):
+    # Compare source-scope candidates, never the draft's merged existing rows.
+    retained_count = sum(any(getattr(item, key).strip() for key in
+                             ("description", "quantity", "unit_price", "line_total"))
+                         for item in candidate.items)
+    return {"visible_item_count": candidate.visible_item_count,
+            "returned_item_count": len(candidate.items), "retained_item_count": retained_count,
+            "scope": "crop" if crop is not None else "pages",
+            "mismatch": (candidate.visible_item_count is not None and
+                         candidate.visible_item_count != len(candidate.items)) or
+                        retained_count != len(candidate.items)}
+
+
 def _merge(candidate, current, crop, preserve_items=False):
     initial = copy.deepcopy(current) if current is not None else {"currency": ""}
     draft = ReceiptData.model_validate(initial).model_dump()
@@ -438,21 +485,7 @@ class VisionEngine:
         finally:
             connection.close()
 
-    def extract(self, pages, ocr_lines, examples=(), crop=None, model=DEFAULT_MODEL, current=None, stop=None,
-                preserve_items=False):
-        started = time.monotonic()
-        if model not in ALLOWED_MODELS:
-            raise VisionError("Choose the local Qwen3-VL 2B or 4B instruct model in Vision setup.")
-        _cancelled(stop)
-        crop = _crop_rect(crop)
-        images, dimensions = _images(pages, crop)
-        context = {"task": "Extract visible receipt values for a human to review.",
-                   "ocr_lines": _ocr_context(ocr_lines, crop, dimensions),
-                   "historical_examples": _example_context(examples)}
-        payload = {"model": model, "stream": False, "format": _output_schema(),
-                   "messages": [{"role": "system", "content": SYSTEM_PROMPT},
-                                {"role": "user", "content": json.dumps(context, ensure_ascii=False), "images": images}],
-                   "options": {"temperature": 0, "num_ctx": 8192, "num_predict": 4096}, "keep_alive": "2m"}
+    def _read_receipt(self, payload, stop):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         if len(body) > MAX_REQUEST_BYTES:
             raise VisionError("Selected pages exceed the local vision request limit. Choose fewer pages or a smaller region.")
@@ -478,39 +511,53 @@ class VisionEngine:
             candidate = VisionReceipt.model_validate_json(content)
         except (ValueError, KeyError, TypeError, ValidationError) as exc:
             raise VisionError("Local vision returned malformed receipt data. Retry a smaller region or enter the values manually.") from exc
-        numeric_notes = []
-        numeric_fields = [(candidate, "total", "Total")]
-        for index, item in enumerate(candidate.items):
-            numeric_fields.extend((item, key, f"Line {index + 1} {label}") for key, label in
-                                  (("quantity", "Quantity"), ("unit_price", "Unit price"), ("line_total", "Amount")))
-        for owner, key, label in numeric_fields:
-            original = getattr(owner, key)
-            normalized = _numeric_value(key, original)
-            if original and original != normalized:
-                numeric_notes.append(f"{label}: interpreted {original} as {normalized}; check the original."
-                                     if normalized else f"{label}: invalid numeric reading {original}; check the original.")
-            setattr(owner, key, normalized)
+        return candidate
+
+    def extract(self, pages, ocr_lines, examples=(), crop=None, model=DEFAULT_MODEL, current=None, stop=None,
+                preserve_items=False):
+        started = time.monotonic()
+        if model not in ALLOWED_MODELS:
+            raise VisionError("Choose the local Qwen3-VL 2B or 4B instruct model in Vision setup.")
+        _cancelled(stop)
+        crop = _crop_rect(crop)
+        images, dimensions = _images(pages, crop)
+        context = {"task": "Extract visible receipt values for a human to review.",
+                   "ocr_lines": _ocr_context(ocr_lines, crop, dimensions),
+                   "historical_examples": _example_context(examples)}
+        payload = {"model": model, "stream": False, "format": _output_schema(),
+                   "messages": [{"role": "system", "content": SYSTEM_PROMPT},
+                                {"role": "user", "content": json.dumps(context, ensure_ascii=False), "images": images}],
+                   "options": {"temperature": 0, "num_ctx": 8192, "num_predict": 4096}, "keep_alive": "2m"}
+        for attempt in range(2):
+            candidate = self._read_receipt(payload, stop)
+            numeric_notes = _normalize_candidate(candidate)
+            row_audit = _row_audit(candidate, crop)
+            if not row_audit["mismatch"] or attempt == 1:
+                break
+            context["row_recheck"] = {
+                **row_audit,
+                "instruction": "The previous row audit disagreed with the output. Independently recount "
+                               "occupied item rows on every supplied image from bottom to top, then extract "
+                               "the complete receipt again in source order. Recheck quantity-adjacent units. "
+                               "The previous count may be wrong; correct it from the image. Keep partly "
+                               "readable rows, exclude blank/non-item rows, and never invent items to fit a count. "
+                               "Return the full JSON object, not a patch.",
+            }
+            payload["messages"][1]["content"] = json.dumps(context, ensure_ascii=False)
         draft, fields = _merge(candidate, current, crop, preserve_items)
-        # Compare source-scope candidates, never the draft's merged existing rows.
-        retained_count = sum(any(getattr(item, key).strip() for key in
-                                 ("description", "quantity", "unit_price", "line_total"))
-                             for item in candidate.items)
-        row_audit = {"visible_item_count": candidate.visible_item_count,
-                     "returned_item_count": len(candidate.items),
-                     "retained_item_count": retained_count,
-                     "scope": "crop" if crop is not None else "pages",
-                     "mismatch": (candidate.visible_item_count is not None and
-                                  candidate.visible_item_count != len(candidate.items)) or
-                                 retained_count != len(candidate.items)}
         notices = ["Local vision suggestions require human verification. "
                    "Uncertain values stay blank or keep the current value. Missing units default to 'unit'."]
         if row_audit["mismatch"]:
             expected = (str(candidate.visible_item_count) if candidate.visible_item_count is not None
                         else "an unknown number of")
             notices.append(f"Item row count needs review: vision reported {expected} visible item rows, "
-                           f"returned {len(candidate.items)}, and retained {retained_count} readable rows "
+                           f"returned {len(candidate.items)}, and retained {row_audit['retained_item_count']} readable rows "
                            f"from the selected {row_audit['scope']}. Recheck the image for skipped or unreadable "
                            "items. The model-reported count is not independent image verification.")
+        if candidate.visible_item_count is None:
+            notices.append("Item row count could not be confirmed. Check the image for skipped items.")
+        if attempt:
+            notices.append("Vision rechecked item rows after a count mismatch. Verify completeness against the image.")
         notices.extend(note.strip()[:300] for note in candidate.reading_notes if note.strip())
         notices.extend(numeric_notes)
         if candidate.receipt_date and not extraction_date(candidate.receipt_date):
@@ -519,7 +566,7 @@ class VisionEngine:
         notices.extend(issue["message"] for issue in validate(draft)
                        if issue["field"] == "item_sum" or issue["field"].endswith(".arithmetic"))
         provenance = {"source": "local_vision", "model": model, "page_count": len(pages), "crop": crop,
-                      "historical_examples": len(context["historical_examples"])}
+                      "historical_examples": len(context["historical_examples"]), "row_rechecks": attempt}
         return {"draft": draft, "field_meta": {field: {**provenance, "line_ids": []} for field in fields},
                 "notice": " ".join(notices),
                 "model": model, "seconds": round(time.monotonic() - started, 3), "provenance": provenance,

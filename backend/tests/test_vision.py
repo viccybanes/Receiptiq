@@ -35,6 +35,7 @@ def runtime():
         def do_POST(self):
             state["path"] = self.path
             state["request"] = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            state.setdefault("requests", []).append(state["request"])
             if state.get("delay"):
                 time.sleep(state["delay"])
             if state.get("disconnect"):
@@ -43,7 +44,8 @@ def runtime():
                 return
             result = state.get("raw")
             if result is None:
-                result = json.dumps({"done": True, "message": {"content": json.dumps(state["result"])}}).encode()
+                candidate = state["results"].pop(0) if state.get("results") else state["result"]
+                result = json.dumps({"done": True, "message": {"content": json.dumps(candidate)}}).encode()
             self.send_response(state["status"])
             if state.get("redirect"):
                 self.send_header("Location", state["redirect"])
@@ -592,3 +594,71 @@ def test_row_audit_rejects_invalid_counts(page, runtime, count):
     runtime['result']['visible_item_count'] = count
     with pytest.raises(VisionError, match='malformed receipt data'):
         runtime['engine'].extract([page], [])
+
+
+@pytest.mark.parametrize(('raw', 'unit', 'quantity', 'expected_unit'), [
+    ('20 boxes', '', '20', 'boxes'), ('5pcs', '', '5', 'pcs'),
+    ('5 pcs.', 'unit', '5', 'pcs.'), ('2.000 kg', '', '2000', 'kg'),
+    ('5 PCS', 'pcs', '5', 'pcs'), ('5 pcs', 'boxes', '', 'boxes'),
+    ('1.5 pcs', '', '', 'unit'), ('5 x', '', '', 'unit'),
+    ('5 @ 10', '', '', 'unit'),
+])
+def test_combined_quantity_unit_is_preserved_without_guessing_or_overriding_conflicts(
+        page, runtime, raw, unit, quantity, expected_unit):
+    runtime['result'] = {'visible_item_count': 1, 'items': [
+        {'description': 'Screws', 'quantity': raw, 'unit': unit},
+    ]}
+    current = ReceiptData(items=[{'description': 'Screws', 'quantity': '8', 'unit': 'bag'}]).model_dump()
+    before = copy.deepcopy(current)
+    result = runtime['engine'].extract([page], [], current=current if quantity else None)
+    item = result['draft']['items'][0]
+    assert (item['quantity'], item['unit']) == (quantity, expected_unit)
+    assert current == before
+    assert len(runtime['requests']) == 1
+    if quantity:
+        assert 'separated Quantity' in result['notice']
+        assert result['field_meta']['items.0.unit']['source'] == 'local_vision'
+    else:
+        assert 'invalid numeric reading' in result['notice']
+
+
+def test_row_count_mismatch_gets_one_sequential_image_recheck(page, runtime):
+    runtime['results'] = [
+        {'visible_item_count': 2, 'items': [{'description': 'Cable', 'quantity': '2'}]},
+        {'visible_item_count': 2, 'items': [
+            {'description': 'Cable', 'quantity': '2'}, {'description': 'Connector', 'quantity': '5pcs'},
+        ]},
+    ]
+    result = runtime['engine'].extract([page], [])
+    assert len(runtime['requests']) == 2
+    first, second = runtime['requests']
+    assert first['messages'][1]['images'] == second['messages'][1]['images']
+    assert 'row_recheck' not in json.loads(first['messages'][1]['content'])
+    recheck = json.loads(second['messages'][1]['content'])['row_recheck']
+    assert recheck['returned_item_count'] == 1 and recheck['visible_item_count'] == 2
+    assert result['row_audit']['mismatch'] is False
+    assert [item['description'] for item in result['draft']['items']] == ['Cable', 'Connector']
+    assert result['draft']['items'][1]['unit'] == 'pcs'
+    assert result['provenance']['row_rechecks'] == 1
+    assert 'rechecked item rows' in result['notice']
+
+
+def test_row_recheck_is_bounded_and_keeps_unresolved_warning(page, runtime):
+    runtime['result']['visible_item_count'] = 3
+    result = runtime['engine'].extract([page], [])
+    assert len(runtime['requests']) == 2
+    assert result['row_audit']['mismatch'] is True
+    assert 'Item row count needs review' in result['notice']
+
+
+def test_unknown_row_count_does_not_claim_completeness_or_loop(page, runtime):
+    result = runtime['engine'].extract([page], [])
+    assert len(runtime['requests']) == 1
+    assert 'Item row count could not be confirmed' in result['notice']
+
+
+def test_cancellation_stops_before_row_recheck(page, runtime):
+    runtime['result']['visible_item_count'] = 3
+    with pytest.raises(VisionError, match='cancelled'):
+        runtime['engine'].extract([page], [], stop=lambda: bool(runtime.get('requests')))
+    assert len(runtime['requests']) == 1
