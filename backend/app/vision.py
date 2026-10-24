@@ -48,6 +48,16 @@ versus print or the intended word is uncertain, do not autocorrect it. Do not
 spell-correct brands, vendor names, abbreviations, product/model codes, or numbers;
 an unfamiliar word is not proof of an error. Never change numeric values to make
 arithmetic fit. Use an empty string when the reading itself remains uncertain.
+Count repeated zeros digit by digit in quantities, prices, amounts, and totals;
+recheck the image before returning 10, 100, or 1000. Never add or drop a visible
+zero. Preserve leading zeros in receipt codes and product/model codes.
+Cross-check quantity times unit price against Amount, and item amounts against
+the paid total, only as clues to recheck the image. Differences can be discounts;
+arithmetic is not permission to invent or change a visibly written value.
+Quantities over 99 are rare: recheck their digits and column alignment in the
+image and flag them in reading_notes. Keep a clearly supported large quantity;
+rarity alone is never a reason to remove zeros or reduce it. If the zero count
+remains uncertain, leave the value empty and identify the field in reading_notes.
 Find Vendor in the seller's heading near the top of the receipt first. Prefer
 the business name over slogans, addresses, phone numbers, tax IDs, receipt titles,
 and customer/bill-to/ship-to names. Top position is a clue, not proof. Leave Vendor
@@ -89,6 +99,16 @@ or amounts. Do not extract tax, subtotal, or discount fields. Do not allocate an
 implicit discount: a human must confirm any arithmetic difference. Preserve item
 reading order. For a cropped image, extract only values visible in that region.
 Read the header, then the item table row by row, then the final amount due.
+Inventory each distinct visible item row across the supplied pages before
+extracting items. Wrapped descriptions belong to one item; identical repeated
+item rows are separate items. Exclude headings, totals, tax, payment and blank
+lines. For a crop, count only item rows visible in that crop. Return that count
+as visible_item_count, or null when the row boundaries cannot be determined.
+After building items, re-scan the image and compare the visible item row count
+with the number of output items. Add any skipped row supported by the image.
+Retain partly unreadable rows with legible fields and blank uncertain fields;
+flag them in reading_notes. Never fabricate rows or values to satisfy a count.
+If a visible row is wholly unreadable, report it in reading_notes for review.
 Use column alignment to distinguish Quantity, Unit cost, and Amount; never move a
 number from a neighboring row into an empty cell. Wrapped descriptions belong to
 the same item unless a separate quantity/amount row is visible. Preserve inch
@@ -127,6 +147,7 @@ class VisionReceipt(StrictModel):
     currency: str = Field(default="", max_length=3)
     total: str = Field(default="", max_length=32)
     notes: str = Field(default="", max_length=4000)
+    visible_item_count: int | None = Field(default=None, ge=0, le=1000, strict=True)
     items: list[VisionItem] = Field(default_factory=list, max_length=1000)
     reading_notes: list[str] = Field(default_factory=list, max_length=12)
 
@@ -312,7 +333,7 @@ def _merge(candidate, current, crop, preserve_items=False):
     suggested = []
     used = set()
     for index, proposed in enumerate(candidate.items):
-        if not any(getattr(proposed, key) for key in ("description", "quantity", "unit_price", "line_total")):
+        if not any(getattr(proposed, key).strip() for key in ("description", "quantity", "unit_price", "line_total")):
             continue
         matches = [i for i, item in enumerate(previous) if i not in used and
                    proposed.description and item["description"].casefold() == proposed.description.casefold()]
@@ -485,8 +506,26 @@ class VisionEngine:
                                      if normalized else f"{label}: invalid numeric reading {original}; check the original.")
             setattr(owner, key, normalized)
         draft, fields = _merge(candidate, current, crop, preserve_items)
+        # Compare source-scope candidates, never the draft's merged existing rows.
+        retained_count = sum(any(getattr(item, key).strip() for key in
+                                 ("description", "quantity", "unit_price", "line_total"))
+                             for item in candidate.items)
+        row_audit = {"visible_item_count": candidate.visible_item_count,
+                     "returned_item_count": len(candidate.items),
+                     "retained_item_count": retained_count,
+                     "scope": "crop" if crop is not None else "pages",
+                     "mismatch": (candidate.visible_item_count is not None and
+                                  candidate.visible_item_count != len(candidate.items)) or
+                                 retained_count != len(candidate.items)}
         notices = ["Local vision suggestions require human verification. "
                    "Uncertain values stay blank or keep the current value. Missing units default to 'unit'."]
+        if row_audit["mismatch"]:
+            expected = (str(candidate.visible_item_count) if candidate.visible_item_count is not None
+                        else "an unknown number of")
+            notices.append(f"Item row count needs review: vision reported {expected} visible item rows, "
+                           f"returned {len(candidate.items)}, and retained {retained_count} readable rows "
+                           f"from the selected {row_audit['scope']}. Recheck the image for skipped or unreadable "
+                           "items. The model-reported count is not independent image verification.")
         notices.extend(note.strip()[:300] for note in candidate.reading_notes if note.strip())
         notices.extend(numeric_notes)
         if candidate.receipt_date and not extraction_date(candidate.receipt_date):
@@ -498,4 +537,5 @@ class VisionEngine:
                       "historical_examples": len(context["historical_examples"])}
         return {"draft": draft, "field_meta": {field: {**provenance, "line_ids": []} for field in fields},
                 "notice": " ".join(notices),
-                "model": model, "seconds": round(time.monotonic() - started, 3), "provenance": provenance}
+                "model": model, "seconds": round(time.monotonic() - started, 3), "provenance": provenance,
+                "row_audit": row_audit}

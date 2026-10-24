@@ -50,7 +50,20 @@ def edit_receipt(store, receipt_id, edit):
         for key, value in data.items():
             if key == "items":
                 if value != receipt["data"]["items"]:
-                    metadata = {key: value for key, value in metadata.items() if not key.startswith("items.")}
+                    # Positions change on insert/reorder; evidence belongs to the stable item ID.
+                    old_items = {item["id"]: (index, item) for index, item in enumerate(receipt["data"]["items"])}
+                    previous_metadata = metadata
+                    metadata = {field: evidence for field, evidence in metadata.items() if not field.startswith("items.")}
+                    for index, item in enumerate(value):
+                        previous = old_items.get(item["id"])
+                        if previous is None:
+                            continue
+                        old_index, old_item = previous
+                        for field, field_value in item.items():
+                            evidence = previous_metadata.get(f"items.{old_index}.{field}")
+                            if evidence is not None:
+                                metadata[f"items.{index}.{field}"] = (evidence if field_value == old_item.get(field) else
+                                    {"source": "manual", "line_ids": evidence.get("line_ids", [])})
             elif value != receipt["data"].get(key):
                 metadata[key] = {"source": "manual", "line_ids": metadata.get(key, {}).get("line_ids", [])}
         try:

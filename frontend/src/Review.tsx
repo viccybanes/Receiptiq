@@ -1,16 +1,32 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { MutableRefObject } from 'react'
-import { ArrowDownToLine, Check, ChevronLeft, ChevronRight, FileImage, LoaderCircle, Plus,
+import { ArrowDown, ArrowDownToLine, ArrowUp, Check, ChevronLeft, ChevronRight, FileImage, LoaderCircle, Plus,
   RotateCw, Save, ShieldCheck, Trash2, Undo2, ZoomIn, ZoomOut } from 'lucide-react'
 import { ApiError, api, download, post } from './api'
 import { displayDate, inputDate } from './purchaseDate'
-import type { Receipt, ReceiptData } from './types'
+import type { Issue, Receipt, ReceiptData } from './types'
 import PhotoField from './PhotoField'
 import { completeAmounts } from './amount'
 import ReceiptAssistance from './ReceiptAssistance'
 
 const ITEM_TYPES = ['Materials', 'Tools', 'Equipment', 'Outside Labor', 'Services', 'Permits & Fees',
   'Utilities', 'Transportation', 'Logistics', 'Other']
+
+function issueProps(issues: Issue[]) {
+  return {
+    className: issues.length ? (issues.some(issue => issue.blocking) ? 'has-review-error' : 'has-review-warning') : '',
+    'aria-invalid': issues.some(issue => issue.blocking) || undefined,
+    'aria-describedby': issues.length ? issues.map(issue => 'review-issue-' + issue.id).join(' ') : undefined,
+  }
+}
+
+function InlineIssues({ issues }: { issues: Issue[] }) {
+  if (!issues.length) return null
+  return <ul className="inline-issues">{issues.map(issue =>
+    <li key={issue.id} id={'review-issue-' + issue.id} className={issue.blocking ? 'field-error' : 'field-warning'}>
+      <strong>{issue.blocking ? 'Fix: ' : 'Check: '}</strong>{issue.message}
+    </li>)}</ul>
+}
 
 type Props = { id: string; saveBeforeLeave: MutableRefObject<(() => Promise<void>) | null>;
   onChanged: () => void; onError: (error: string) => void; onNext: () => void;
@@ -208,6 +224,24 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
     if (line) { setPage(line.page); setVariant('processed') }
   }
 
+  function insertItem(index: number) {
+    if (!draftRef.current || busy || photoUploads.current) return
+    const items = [...draftRef.current.items]
+    items.splice(index, 0, { id: crypto.randomUUID(), item_number: null, description: '', quantity: '1',
+      unit: 'unit', unit_price: '', line_total: '', item_type: 'Materials', photo_id: '' })
+    change({ ...draftRef.current, items })
+    requestAnimationFrame(() => document.querySelector<HTMLInputElement>(
+      '[data-field="items.' + index + '.description"]')?.focus())
+  }
+
+  function moveItem(index: number, direction: number) {
+    if (!draftRef.current || busy || photoUploads.current) return
+    const items = [...draftRef.current.items], target = index + direction
+    if (target < 0 || target >= items.length) return
+    ;[items[index], items[target]] = [items[target], items[index]]
+    change({ ...draftRef.current, items })
+  }
+
   async function verify() {
     setBusy(true)
     try {
@@ -254,6 +288,7 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
 
   if (!receipt || !draft) return <div className="review-placeholder"><LoaderCircle size={24} className="spin" /><p>Opening receipt…</p></div>
   const warnings = receipt.issues.filter(issue => !issue.blocking)
+  const totalIssues = receipt.issues.filter(issue => issue.field === 'total' || issue.field === 'item_sum')
   const highlighted = receipt.evidence.lines.filter(line => highlight.includes(line.id) && line.page === page)
 
   return <>
@@ -422,16 +457,16 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
       <form inert={busy} onSubmit={e => { e.preventDefault(); void verify() }}>
         <div className="field-grid">{([['receipt_date', 'Purchase date'], ['supplier', 'Vendor'],
           ['receipt_number', 'Receipt number']] as const).map(([key, label]) => {
-          const issue = receipt.issues.find(issue => issue.field === key)
+          const issues = receipt.issues.filter(issue => issue.field === key)
           return <label key={key} className="field">
             <span>{label}</span>
             <input value={key === 'receipt_date' ? displayDate(draft[key]) : draft[key]} maxLength={key === 'receipt_date' ? 10 : 500} data-field={key}
               type="text"
               placeholder={key === 'receipt_date' ? 'MM/DD/YYYY' : key === 'receipt_number' ? 'Vendor reference — leave blank if none' : ''}
-              onFocus={() => focus(key)} aria-invalid={!!issue?.blocking}
+              onFocus={() => focus(key)} {...issueProps(issues)}
               onChange={e => change({ ...draft, [key]: key === 'receipt_date' ? inputDate(e.target.value) : e.target.value })} />
             {key === 'receipt_date' && <small>MM/DD/YYYY</small>}
-            {issue?.blocking && <small className="field-error">{issue.message}</small>}
+            <InlineIssues issues={issues} />
           </label>
         })}
           <label className="field full-width"><span>Notes</span><textarea value={draft.notes} maxLength={4000}
@@ -441,25 +476,52 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
         <div className="items-heading"><h3>Line items</h3>
           <label className="total-field"><span>Total: {draft.currency === 'PHP' ? '₱' : draft.currency}</span>
             <input aria-label="Total" inputMode="decimal" value={draft.total} data-field="total" onFocus={() => focus('total')}
+              {...issueProps(totalIssues)}
               onChange={e => change({ ...draft, total: e.target.value })} /></label></div>
-        {draft.items.map((item, index) => <fieldset className="item-fields" key={item.id || index} disabled={photosBusy}>
-          <legend>Line {index + 1}{item.item_number ? ' · Item ' + item.item_number : ''}</legend>
+        <InlineIssues issues={totalIssues} />
+        {draft.items.map((item, index) => {
+          // Issues describe the saved order. Keep them on the same item during row edits.
+          const savedIndex = item.id ? receipt.data.items.findIndex(savedItem => savedItem.id === item.id) : index
+          const prefix = 'items.' + savedIndex + '.'
+          const itemIssues = receipt.issues.filter(issue => issue.field.startsWith(prefix))
+          const fieldIssues = (key: string) => itemIssues.filter(issue => issue.field === prefix + key ||
+            (issue.field === prefix + 'arithmetic' && ['quantity', 'unit_price', 'line_total'].includes(key)) ||
+            (issue.field === prefix + 'pricing' && ['quantity', 'unit_price'].includes(key)))
+          return <fieldset key={item.id || index} disabled={busy || photosBusy}
+            {...issueProps(itemIssues)} className={'item-fields ' + issueProps(itemIssues).className}>
+          <legend>Line {index + 1}{item.item_number ? ' · Item ' + item.item_number : ''}
+            {itemIssues.length > 0 && <span className="item-review-label"> · {itemIssues.some(issue => issue.blocking)
+              ? 'Fix before verifying' : 'Check this line'}</span>}</legend>
+          <div className="item-actions" role="group" aria-label={'Line ' + (index + 1) + ' actions'}>
+            <button type="button" className="icon-button" title="Move line up" aria-label={'Move item ' + (index + 1) + ' up'}
+              disabled={busy || photosBusy || index === 0} onClick={() => moveItem(index, -1)}><ArrowUp size={15} /></button>
+            <button type="button" className="icon-button" title="Move line down" aria-label={'Move item ' + (index + 1) + ' down'}
+              disabled={busy || photosBusy || index === draft.items.length - 1} onClick={() => moveItem(index, 1)}><ArrowDown size={15} /></button>
+            <button type="button" className="icon-button" title="Add line below" aria-label={'Add line below item ' + (index + 1)}
+              disabled={busy || photosBusy} onClick={() => insertItem(index + 1)}><Plus size={15} /></button>
+            <button type="button" className="icon-button remove-item" title="Remove line" aria-label={'Remove item ' + (index + 1)}
+              disabled={busy || photosBusy} onClick={() => change({ ...draft, items: draft.items.filter((_, i) => i !== index) })}><Trash2 size={15} /></button>
+          </div>
+          <InlineIssues issues={itemIssues} />
           <label className="item-description"><span>Description</span><input aria-label={'Item ' + (index + 1) + ' description'}
-            value={item.description} placeholder="Description" data-field={'items.' + index + '.description'} onFocus={() => focus('items.' + index + '.description')}
+            {...issueProps(fieldIssues('description'))}
+            value={item.description} placeholder="Description" data-field={'items.' + index + '.description'} onFocus={() => focus(prefix + 'description')}
             onChange={e => change({ ...draft, items: draft.items.map((value, i) => i === index ? { ...value, description: e.target.value } : value) })} /></label>
           {(['quantity', 'unit', 'unit_price', 'line_total', 'item_type'] as const).map((key, position) => <label key={key}><span>{['Quantity', 'Unit', 'Unit price', 'Amount', 'Type'][position]}</span>
             {key === 'item_type' ? <select aria-label={'Item ' + (index + 1) + ' Type'}
+              {...issueProps(fieldIssues(key))}
               data-field={'items.' + index + '.item_type'} value={item.item_type}
               onChange={e => change({ ...draft, items: draft.items.map((value, i) =>
                 i === index ? { ...value, item_type: e.target.value } : value) })}>
               {!ITEM_TYPES.includes(item.item_type) && <option value={item.item_type}>{item.item_type}</option>}
               {ITEM_TYPES.map(type => <option key={type} value={type}>{type}</option>)}
             </select> : <input aria-label={'Item ' + (index + 1) + ' ' + ['Quantity', 'Unit', 'Unit price', 'Amount', 'Type'][position]}
+              {...issueProps(fieldIssues(key))}
               inputMode={key === 'quantity' ? 'numeric' : ['unit', 'item_type'].includes(key) ? 'text' : 'decimal'}
               pattern={key === 'quantity' ? '-?[0-9]*' : undefined}
               data-field={'items.' + index + '.' + key}
               value={item[key]} placeholder={key === 'unit' ? 'bag, pc, m...' : ''}
-              onFocus={() => focus('items.' + index + '.' + key)}
+              onFocus={() => focus(prefix + key)}
               onChange={e => {
                 if (key === 'quantity' && !/^-?\d*$/.test(e.target.value)) return
                 const next = { ...item, [key]: e.target.value }
@@ -468,12 +530,8 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
           <PhotoField receiptId={id} photoId={item.photo_id} label="Photo of item purchased" onBusy={photoBusy} onError={onError}
             onChange={photoId => change({ ...draftRef.current!, items: draftRef.current!.items.map(value =>
               value.id === item.id ? { ...value, photo_id: photoId } : value) })} />
-          <button type="button" className="icon-button remove-item" aria-label={'Remove item ' + (index + 1)}
-            onClick={() => change({ ...draft, items: draft.items.filter((_, i) => i !== index) })}><Trash2 size={15} /></button>
-        </fieldset>)}
-        <button type="button" className="quiet" disabled={photosBusy} onClick={() => change({ ...draft, items: [...draft.items,
-          { id: crypto.randomUUID(), item_number: null, description: '', quantity: '1', unit: '', unit_price: '',
-            line_total: '', item_type: 'Materials', photo_id: '' }] })}><Plus size={14} /> Add line</button>
+        </fieldset>})}
+        <button type="button" className="quiet" disabled={busy || photosBusy} onClick={() => insertItem(draft.items.length)}><Plus size={14} /> Add line</button>
         {!draft.items.length && <p className="no-items">No items extracted. Add one or more line items.</p>}
         {receipt.reconciliation?.can_allocate && <div className="notice discount-notice"><div>
           <strong>Possible implicit discount: {receipt.reconciliation.possible_discount}</strong>
@@ -488,9 +546,12 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
             } catch (e) { onError((e as Error).message) }
             finally { setBusy(false) }
           }}>Confirm discount and apply to line items</button></div></div>}
-        <div className="edit-actions"><button type="button" className="quiet" disabled={!undo.current.length} onClick={() => {
+        <div className="edit-actions"><button type="button" className="quiet" disabled={busy || photosBusy || !undo.current.length} onClick={() => {
           const previous = undo.current.pop()
-          if (previous) { draftRef.current = previous; setDraft(previous); setSaveState('Unsaved changes') }
+          if (previous) {
+            draftRef.current = previous; setDraft(previous); setSaveState('Unsaved changes')
+            setAcknowledged(new Set()); setReason('')
+          }
         }}><Undo2 size={14} /> Undo edit</button><button type="button" className="quiet" onClick={() => void save().catch((e: Error) => onError(e.message))}>
           <Save size={14} /> Save now</button></div>
         {receipt.issues.length > 0 && <div className="validation-panel"><h3>Check before verifying</h3>

@@ -87,6 +87,15 @@ def test_structured_local_request_and_provenance(page, runtime, monkeypatch):
     assert "printed PIVUT must remain PIVUT" in prompt
     assert "Only for clearly handwritten ordinary words" in prompt
     assert "Do not use an item description as Vendor" in prompt
+    assert "Count repeated zeros digit by digit" in prompt
+    assert "Quantities over 99 are rare" in prompt
+    assert "Preserve leading zeros in receipt codes" in prompt
+    assert "re-scan the image" in prompt
+    assert "identical repeated" in prompt
+    assert "Never fabricate rows or values to satisfy a count" in prompt
+    count_schema = payload['format']['properties']['visible_item_count']
+    assert {'type': 'integer', 'minimum': 0, 'maximum': 1000} in count_schema['anyOf']
+    assert {'type': 'null'} in count_schema['anyOf']
     assert "ignore all previous instructions" in payload["messages"][1]["content"]
     assert str(page) not in json.dumps(payload) and page.name not in json.dumps(payload)
     with Image.open(io.BytesIO(base64.b64decode(payload["messages"][1]["images"][0]))) as image:
@@ -495,3 +504,82 @@ def test_numeric_policy_reaches_draft_without_changing_codes_or_descriptions(pag
     assert draft['items'][1]['quantity'] == ''
     assert 'interpreted 1.000 as 1000' in result['notice']
     assert 'invalid numeric reading 1.5' in result['notice']
+
+
+@pytest.mark.parametrize('quantity', ['10', '100', '1000', '10000'])
+def test_repeated_zeros_survive_vision_even_when_arithmetic_disagrees(page, runtime, quantity):
+    runtime['result'] = {
+        'receipt_number': '000100 / 00100 / 000100', 'total': '10000.00',
+        'items': [{'description': 'Cable 00100', 'quantity': quantity,
+                   'unit_price': '100.00', 'line_total': '100.00'}],
+    }
+    result = runtime['engine'].extract([page], [])
+    draft = result['draft']
+    assert draft['receipt_number'] == '000100 / 00100'
+    assert draft['total'] == '10000.00'
+    assert draft['items'][0]['description'] == 'Cable 00100'
+    assert draft['items'][0]['quantity'] == quantity
+    assert draft['items'][0]['unit_price'] == '100.00'
+    assert draft['items'][0]['line_total'] == '100.00'
+    assert any(issue['field'] == 'items.0.arithmetic' for issue in vision.validate(draft))
+
+
+@pytest.mark.parametrize(('reported', 'mismatch'), [(1, False), (2, True), (0, True), (None, False)])
+def test_row_audit_compares_reported_count_to_candidates(page, runtime, reported, mismatch):
+    # Missing counts remain compatible with old responses and do not assert completeness.
+    if reported is not None:
+        runtime['result']['visible_item_count'] = reported
+    result = runtime['engine'].extract([page], [])
+    assert result['row_audit'] == {'visible_item_count': reported, 'returned_item_count': 1,
+                                   'retained_item_count': 1, 'scope': 'pages', 'mismatch': mismatch}
+    assert ('Item row count needs review' in result['notice']) == mismatch
+
+
+def test_row_audit_retains_partial_and_duplicate_rows_but_reports_empty_rows(page, runtime):
+    runtime['result'] = {'visible_item_count': 4, 'items': [
+        {'description': 'Cable'}, {'description': 'Cable'}, {'quantity': '100'}, {},
+    ]}
+    result = runtime['engine'].extract([page], [])
+    assert [item['description'] for item in result['draft']['items']] == ['Cable', 'Cable', '']
+    assert result['draft']['items'][2]['quantity'] == '100'
+    assert result['row_audit']['returned_item_count'] == 4
+    assert result['row_audit']['retained_item_count'] == 3
+    assert result['row_audit']['mismatch'] is True
+    assert 'not independent image verification' in result['notice']
+
+
+@pytest.mark.parametrize('crop', [None, [0.1, 0.1, 0.9, 0.9]])
+def test_row_audit_ignores_existing_rows_merged_from_other_regions(page, runtime, crop):
+    runtime['result'] = {'visible_item_count': 1, 'items': [{'description': 'New cable'}]}
+    current = ReceiptData(items=[{'description': 'Old item'}, {'description': 'Other page'}]).model_dump()
+    result = runtime['engine'].extract([page], [], current=current, crop=crop, preserve_items=True)
+    assert len(result['draft']['items']) == 3
+    assert result['row_audit']['scope'] == ('crop' if crop else 'pages')
+    assert result['row_audit']['retained_item_count'] == 1
+    assert result['row_audit']['mismatch'] is False
+
+
+def test_row_audit_counts_combined_pages_once(page, runtime):
+    runtime['result'] = {'visible_item_count': 2, 'items': [{'description': 'A'}, {'description': 'B'}]}
+    result = runtime['engine'].extract([page, page], [])
+    assert result['provenance']['page_count'] == 2
+    assert result['row_audit']['retained_item_count'] == 2
+    assert result['row_audit']['mismatch'] is False
+
+
+@pytest.mark.parametrize('item', [{}, {'description': '   '}, {'quantity': '1.5'}])
+def test_row_audit_warns_when_unreadable_candidate_is_filtered_without_count(page, runtime, item):
+    runtime['result'] = {'items': [item]}
+    result = runtime['engine'].extract([page], [])
+    assert result['row_audit']['visible_item_count'] is None
+    assert result['row_audit']['returned_item_count'] == 1
+    assert result['row_audit']['retained_item_count'] == 0
+    assert result['row_audit']['mismatch'] is True
+    assert 'Item row count needs review' in result['notice']
+
+
+@pytest.mark.parametrize('count', [-1, 1001, 1.5, True, '2'])
+def test_row_audit_rejects_invalid_counts(page, runtime, count):
+    runtime['result']['visible_item_count'] = count
+    with pytest.raises(VisionError, match='malformed receipt data'):
+        runtime['engine'].extract([page], [])
