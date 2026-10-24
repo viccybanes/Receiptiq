@@ -181,7 +181,27 @@ def test_unknown_fields_remain_blank_and_preserved_values_have_no_false_provenan
 
 
 @pytest.mark.parametrize('text,expected', [('8/27/26', '2026-08-27'), ('27/8/2026', '2026-08-27'),
-                                         ('08/09/26', ''), ('02/29/25', '')])
+                                         ('08/09/26', ''), ('02/29/25', ''),
+                                         ('SEPT. 01, 2026', '2026-09-01'),
+                                         ('Sep 1, 2026', '2026-09-01'),
+                                         ('September 01, 2026', '2026-09-01'),
+                                         ('01 September 2026', '2026-09-01'),
+                                         ('01-Sept.-26', '2026-09-01'),
+                                         ('  sEpT.   01, 2026  ', '2026-09-01'),
+                                         ('January 2, 2026', '2026-01-02'),
+                                         ('Feb. 29, 2024', '2024-02-29'),
+                                         ('3 March 2026', '2026-03-03'),
+                                         ('Apr 4 2026', '2026-04-04'),
+                                         ('May 5, 2026', '2026-05-05'),
+                                         ('June 6, 2026', '2026-06-06'),
+                                         ('Jul. 7, 2026', '2026-07-07'),
+                                         ('August 8, 2026', '2026-08-08'),
+                                         ('Oct. 10, 2026', '2026-10-10'),
+                                         ('November 11, 2026', '2026-11-11'),
+                                         ('12 Dec 26', '2026-12-12'),
+                                         ('Feb. 29, 2026', ''), ('April 31, 2026', ''),
+                                         ('Sept. 00, 2026', ''), ('Sept. 01', ''),
+                                         ('Sept. 01, 20?6', ''), ('Septic 01, 2026', '')])
 def test_vision_date_normalization_and_uncertainty(page, runtime, text, expected):
     runtime['result'] = {'receipt_date': text, 'items': []}
     result = runtime['engine'].extract([page], [])

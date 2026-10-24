@@ -56,6 +56,12 @@ no vendor evidence. Do not use an item description as Vendor.
 Use supplier for Vendor, receipt_date for Purchase date (YYYY-MM-DD only when
 unambiguous), receipt_number for every visible receipt/invoice/transaction code
 in reading order joined with ' / ', total for the final Total, and notes for Notes.
+Read Purchase date with full month names or abbreviations, including a trailing
+period, in either month-day-year or day-month-year order. Convert clear dates to
+YYYY-MM-DD: SEPT. 01, 2026 and 01 September 2026 both mean 2026-09-01.
+Do not discard a legible date just because the month is written as text. If you
+cannot format a clearly read written date, return its original text for the app
+to normalize. Never guess a missing or unclear day, month, or year.
 Items contain description, quantity, unit, unit_price, line_total (Amount), and
 item_type (Type). Classify Type using the item description and visible context.
 Choose exactly one of: Materials, Tools, Equipment, Outside Labor, Services,
@@ -480,7 +486,7 @@ class VisionEngine:
         notices.extend(note.strip()[:300] for note in candidate.reading_notes if note.strip())
         notices.extend(numeric_notes)
         if candidate.receipt_date and not extraction_date(candidate.receipt_date):
-            notices.append("Purchase date could not be normalized unambiguously. Check the original and enter MM/DD/YY.")
+            notices.append("Purchase date could not be normalized unambiguously. Check the original and enter MM/DD/YYYY.")
         # Arithmetic is checked in Python, never entrusted to the model's prose.
         notices.extend(issue["message"] for issue in validate(draft)
                        if issue["field"] == "item_sum" or issue["field"].endswith(".arithmetic"))

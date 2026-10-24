@@ -7,6 +7,12 @@ from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal, InvalidOperation
 from .models import blank_data
 
 AMOUNT = r"-?\d[\d,]*\.\d{2}"
+MONTH_NUMBERS = {
+    "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
+    "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7,
+    "aug": 8, "august": 8, "sep": 9, "sept": 9, "september": 9,
+    "oct": 10, "october": 10, "nov": 11, "november": 11, "dec": 12, "december": 12,
+}
 FIELD_LABELS = {"supplier": "Vendor", "receipt_date": "Purchase date", "receipt_number": "Receipt number",
                 "total": "Total", "line_total": "Amount", "quantity": "Quantity", "unit_price": "Unit price"}
 
@@ -26,6 +32,19 @@ def decimal(value):
 def extraction_date(value):
     """Normalize clear dates; ambiguous day/month readings need human review."""
     value = value.strip()
+    written = re.fullmatch(
+        r"(?:([A-Za-z]+)\.?[\s/-]+(\d{1,2})|(\d{1,2})[\s/-]+([A-Za-z]+)\.?)"
+        r"(?:,\s*|[\s/-]+)(\d{4}|\d{2})", value,
+    )
+    if written:
+        month = MONTH_NUMBERS.get((written[1] or written[4]).lower(), 0)
+        day = int(written[2] or written[3])
+        # Match the numeric-date convention for two-digit receipt years.
+        year = int(written[5]) + (2000 if len(written[5]) == 2 else 0)
+        try:
+            return date(year, month, day).isoformat()
+        except ValueError:
+            return ""
     if re.fullmatch(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}", value):
         try:
             return date(*map(int, re.split(r"[-/]", value))).isoformat()
