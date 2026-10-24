@@ -93,6 +93,7 @@ def test_structured_local_request_and_provenance(page, runtime, monkeypatch):
         assert image.size == (800, 1000)
     assert result["draft"]["receipt_number"] == "R-1 / T-2"
     assert result["draft"]["items"][0]["item_type"] == "Materials"
+    assert result["draft"]["items"][0]["unit"] == "cup"
     assert result["draft"]["tax"] == ""
     assert result["field_meta"]["total"]["source"] == "local_vision"
     assert result["provenance"]["page_count"] == 1
@@ -209,11 +210,15 @@ def test_vision_date_normalization_and_uncertainty(page, runtime, text, expected
     assert ('could not be normalized' in result['notice']) == (not expected)
 
 
-@pytest.mark.parametrize("marker", ["x", "X", "@", "×"])
-def test_multiplication_markers_are_not_units_and_new_items_use_materials(page, runtime, marker):
-    runtime["result"] = {"items": [{"description": "Coffee", "unit": marker, "item_type": "Material"}]}
+@pytest.mark.parametrize("unit", [None, "", "   ", "x", "X", "@", "×"])
+def test_missing_or_invalid_units_default_without_replacing_existing_units(page, runtime, unit):
+    proposed = {"description": "Coffee", "item_type": "Material"}
+    if unit is not None:
+        proposed["unit"] = unit
+    runtime["result"] = {"items": [proposed]}
     result = runtime["engine"].extract([page], [])
-    assert result["draft"]["items"][0]["unit"] == ""
+    assert result["draft"]["items"][0]["unit"] == "unit"
+    assert "items.0.unit" not in result["field_meta"]  # A default is not image evidence.
     assert result["draft"]["items"][0]["item_type"] == "Materials"
     current = ReceiptData(items=[{"id": "coffee", "description": "Coffee", "unit": "cup", "photo_id": "photo"}]).model_dump()
     result = runtime["engine"].extract([page], [], current=current)
@@ -221,6 +226,10 @@ def test_multiplication_markers_are_not_units_and_new_items_use_materials(page, 
     assert result["draft"]["items"][0]["id"] == "coffee"
     assert result["draft"]["items"][0]["photo_id"] == "photo"
     assert "items.0.unit" not in result["field_meta"]
+    current["items"][0]["unit"] = ""
+    result = runtime["engine"].extract([page], [], current=current)
+    assert result["draft"]["items"][0]["unit"] == "unit"
+    assert current["items"][0]["unit"] == ""
 
 
 def test_ai_types_and_item_numbers_never_replace_workplace_metadata(page, runtime):
@@ -281,7 +290,7 @@ def test_full_page_preserves_unseen_items_only_when_reading_part_of_a_receipt(pa
     else:
         assert [item["description"] for item in items] == ["Coffee", "Notebook"]
         coffee = items[0]
-    assert coffee == {**current["items"][1], "line_total": "90.00"}
+    assert coffee == {**current["items"][1], "line_total": "90.00", "unit": "unit"}
 
 
 @pytest.mark.parametrize("model", ["qwen3-vl:235b-cloud", "qwen3-vl:2b", "https://evil.example/model", "other"])

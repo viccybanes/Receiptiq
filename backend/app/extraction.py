@@ -152,7 +152,7 @@ def parse(lines):
             + AMOUNT + r")\s+)?(" + AMOUNT + r")\s*$", text)
         if match and re.search(r"[A-Za-z]", match[1]) and not re.search(r"\b(date|tel|phone)\b", match[1], re.I):
             index = len(data["items"])
-            data["items"].append({"description": match[1].strip(), "quantity": match[2] or "", "unit": match[3] or "",
+            data["items"].append({"description": match[1].strip(), "quantity": match[2] or "", "unit": match[3] or "unit",
                                   "unit_price": (match[4] or "").replace(",", ""),
                                   "line_total": match[5].replace(",", ""), "item_type": "Materials", "photo_id": ""})
             for field in ("description", "quantity", "unit_price", "line_total"):

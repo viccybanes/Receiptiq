@@ -46,6 +46,16 @@ def test_receipt_codes_order_duplicates_units():
     assert not reconcile(data)["can_allocate"]  # net Amount already matches Total
 
 
+@pytest.mark.parametrize("text,expected", [
+    ("Rice 2 bag x 50.00 100.00", "bag"),
+    ("Rice 2 x 50.00 100.00", "unit"),
+    ("Rice 100.00", "unit"),
+])
+def test_ocr_missing_units_use_default(text, expected):
+    data, _ = parse([{"text": text, "id": "line", "page": 0, "box": [0, 0, 500, 15]}])
+    assert data["items"][0]["unit"] == expected
+
+
 def test_discount_allocation_exact_cents_and_never_automatic(client):
     receipt, _ = ready_receipt(client)
     receipt["data"]["total"] = "100.01"

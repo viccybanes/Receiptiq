@@ -62,6 +62,8 @@ YYYY-MM-DD: SEPT. 01, 2026 and 01 September 2026 both mean 2026-09-01.
 Do not discard a legible date just because the month is written as text. If you
 cannot format a clearly read written date, return its original text for the app
 to normalize. Never guess a missing or unclear day, month, or year.
+Leave an absent or unreadable unit empty. The app defaults it to 'unit' while
+preserving an existing unit. Multiplication markers (x, @) are not units.
 Items contain description, quantity, unit, unit_price, line_total (Amount), and
 item_type (Type). Classify Type using the item description and visible context.
 Choose exactly one of: Materials, Tools, Equipment, Outside Labor, Services,
@@ -326,6 +328,8 @@ def _merge(candidate, current, crop, preserve_items=False):
             if _valid_value(key, value):
                 item[key] = value
                 supplied.append(key)
+        if not item["unit"].strip():
+            item["unit"] = "unit"  # Default only; do not mark it as image evidence.
         if match is None and proposed.description.strip():
             category = next((value for value in ITEM_TYPES if value.casefold() == proposed.item_type.strip().casefold()), None)
             if category:
@@ -482,7 +486,7 @@ class VisionEngine:
             setattr(owner, key, normalized)
         draft, fields = _merge(candidate, current, crop, preserve_items)
         notices = ["Local vision suggestions require human verification. "
-                   "Uncertain values stay blank or keep the current value."]
+                   "Uncertain values stay blank or keep the current value. Missing units default to 'unit'."]
         notices.extend(note.strip()[:300] for note in candidate.reading_notes if note.strip())
         notices.extend(numeric_notes)
         if candidate.receipt_date and not extraction_date(candidate.receipt_date):
