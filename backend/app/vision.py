@@ -12,9 +12,10 @@ import select
 import socket
 import time
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, field_validator
 from pydantic_core import from_json
 
 from .extraction import decimal, extraction_date, validate
@@ -91,6 +92,9 @@ Item fields and numbers:
   recheck every empty unit against its quantity cell. Do not infer units from the
   product or copy another row's unit. Leave genuinely absent/unreadable units empty;
   x and @ are multiplication markers, not units. The app supplies the default unit.
+  Unit must name a unit, never a quantity, price, or bare number. Inspect the text
+  beside Quantity for pcs, mtrs, boxes, gals, kgs, kilos or another supported unit;
+  correct its spelling only when the image supports that reading.
 - Money uses decimal strings with at most two decimal places, without currency
   symbols or grouping separators. In numeric fields, a dot followed by three or
   more digits is grouping; one or two digits after a dot are decimal places.
@@ -135,6 +139,16 @@ class VisionItem(StrictModel):
     line_total: str = Field(default="", max_length=32)
     item_type: str = Field(default="", max_length=100)
     item_number: int | None = Field(default=None, ge=1)
+    source_page: int | None = Field(default=None, ge=0, le=5, strict=True)
+    source_box: list[float] | None = Field(default=None, min_length=4, max_length=4)
+
+    @field_validator("source_box")
+    @classmethod
+    def valid_box(cls, value):
+        if value is not None and (not all(math.isfinite(v) and 0 <= v <= 1 for v in value) or
+                                  value[0] >= value[2] or value[1] >= value[3]):
+            raise ValueError("Use normalized left, top, right, bottom coordinates.")
+        return value
 
 
 class VisionReceipt(StrictModel):
@@ -149,12 +163,15 @@ class VisionReceipt(StrictModel):
     reading_notes: list[str] = Field(default_factory=list, max_length=12)
 
 
-def _output_schema():
+def _output_schema(capture_regions=False):
     schema = VisionReceipt.model_json_schema()
     # Optional grammar keys made Qwen stop after dates/totals despite legible headers.
     # Require every key while retaining empty strings for genuinely unreadable values.
     schema["required"] = list(schema["properties"])
     item_schema = schema["$defs"]["VisionItem"]
+    if not capture_regions:
+        for field in ("source_page", "source_box"):
+            item_schema["properties"].pop(field)
     item_schema["required"] = list(item_schema["properties"])
     item_schema["properties"]["item_type"]["enum"] = list(ITEM_TYPES)
     return schema
@@ -330,10 +347,22 @@ def _example_context(examples):
     return result
 
 
+def _unit_value(value):
+    value = value.strip()
+    if value.casefold() == "x" or re.match(r"-?[\d.,]", value) or not re.search(r"[A-Za-z]", value):
+        return ""
+    aliases = {"pcs": ("pc", "pcs", "piece", "pieces"),
+               "mtrs": ("mtr", "mtrs", "meter", "meters", "metre", "metres"),
+               "boxes": ("box", "boxes"), "gals": ("gal", "gals", "gallon", "gallons"),
+               "kgs": ("kg", "kgs", "kilogram", "kilograms"), "kilos": ("kilo", "kilos")}
+    spelling = re.sub(r"[.\s]", "", value).casefold()
+    return next((unit for unit, forms in aliases.items() if spelling in forms), value)
+
+
 def _valid_value(key, value):
     if not value:
         return False
-    if key == "unit" and value in ("x", "X", "@", "×"):
+    if key == "unit" and not _unit_value(value):
         return False
     if key == "receipt_date":
         try:
@@ -366,21 +395,38 @@ def _numeric_value(key, value):
     return value if re.fullmatch(r"-?\d+(?:\.\d{1,2})?", value) else ""
 
 
-def _normalize_candidate(candidate):
+def _normalize_candidate(candidate, amount_first=False):
     """Keep explicit quantity/unit pairs before validating the numeric fields."""
     notices = []
     numeric_fields = [(candidate, "total", "Total")]
     for index, item in enumerate(candidate.items):
+        numeric_unit = _numeric_value("unit_price", item.unit)
         pair = re.fullmatch(r"(-?[\d.,]+)\s*([A-Za-z]+\.?)", item.quantity.strip())
         if pair and _numeric_value("quantity", pair[1]) and pair[2].casefold() != "x":
-            unit = item.unit.strip().casefold().rstrip(".")
-            if unit in ("", "unit", pair[2].casefold().rstrip(".")):
+            unit = _unit_value(item.unit).casefold().rstrip(".")
+            if unit in ("", "unit", _unit_value(pair[2]).casefold().rstrip(".")):
                 original = item.quantity
                 item.quantity = pair[1]
                 if unit in ("", "unit"):
                     item.unit = pair[2]
                 notices.append(f"Line {index + 1}: separated Quantity {item.quantity} and Unit {item.unit} "
                                f"from {original}; check the original.")
+        original_unit = item.unit
+        unit_pair = re.fullmatch(r"(-?[\d.,]+)\s*([A-Za-z]+\.?)", item.unit.strip())
+        if unit_pair and _numeric_value("quantity", unit_pair[1]) == _numeric_value("quantity", item.quantity):
+            item.unit = unit_pair[2]
+        item.unit = _unit_value(item.unit)
+        quantity = _numeric_value("quantity", item.quantity)
+        amount = _numeric_value("line_total", item.line_total)
+        price = _numeric_value("unit_price", item.unit_price)
+        if amount_first and numeric_unit and quantity and amount and price == amount and decimal(quantity) > 1:
+            if decimal(numeric_unit) * decimal(quantity) == decimal(amount):
+                item.unit_price = ""  # Derive after merge so existing human values remain protected.
+                notices.append(f"Line {index + 1}: rechecked shifted Unit / Unit price columns against Quantity and Amount.")
+        if original_unit and original_unit != item.unit:
+            notices.append(f"Line {index + 1} Unit: " +
+                           (f"normalized {original_unit} to {item.unit}." if item.unit else
+                            f"rejected numeric or invalid unit {original_unit}; check the original."))
         numeric_fields.extend((item, key, f"Line {index + 1} {label}") for key, label in
                               (("quantity", "Quantity"), ("unit_price", "Unit price"), ("line_total", "Amount")))
     for owner, key, label in numeric_fields:
@@ -391,6 +437,102 @@ def _normalize_candidate(candidate):
                            if normalized else f"{label}: invalid numeric reading {original}; check the original.")
         setattr(owner, key, normalized)
     return notices
+
+
+def _duplicate_tail(candidate):
+    if len(candidate.items) < 2:
+        return False
+    fields = ("description", "quantity", "unit", "unit_price", "line_total")
+    signatures = [tuple(" ".join(getattr(item, key).casefold().split()) for key in fields)
+                  for item in candidate.items[-2:]]
+    return bool(candidate.items[-1].description.strip()) and signatures[0] == signatures[1]
+
+
+def _remove_duplicate_tail(candidate):
+    removed = 0
+    while _duplicate_tail(candidate):
+        left, right = candidate.items[-2:]
+        same_region = (left.source_box is not None and left.source_box == right.source_box and
+                       left.source_page is not None and left.source_page == right.source_page)
+        distinct_regions = (left.source_box is not None and right.source_box is not None and
+                            left.source_page is not None and right.source_page is not None and not same_region)
+        excess = (not distinct_regions and candidate.visible_item_count is not None and
+                  len(candidate.items) > candidate.visible_item_count)
+        if not (same_region or excess):
+            break  # Identical purchases on distinct receipt rows are legitimate.
+        candidate.items.pop()
+        removed += 1
+    return removed
+
+
+def _derive_from_amount(draft):
+    derived = []
+    for index, item in enumerate(draft["items"]):
+        if not item["line_total"] or bool(item["quantity"]) == bool(item["unit_price"]):
+            continue
+        key, known = ("quantity", "unit_price") if not item["quantity"] else ("unit_price", "quantity")
+        try:
+            amount, factor = decimal(item["line_total"]), decimal(item[known])
+            if amount <= 0 or factor <= 0:
+                continue
+            value = amount / factor
+            if key == "quantity" and value != value.to_integral_value():
+                continue
+            if key == "unit_price" and (factor != factor.to_integral_value() or
+                                        value != value.quantize(Decimal("0.01"))):
+                continue
+            if value * factor != amount:
+                continue
+            text = str(int(value)) if key == "quantity" else format(value, ".2f")
+            decimal(text)
+            item[key] = text
+            derived.append((f"items.{index}.{key}", known))
+        except (ValueError, ArithmeticError):
+            continue
+    return derived
+
+
+def _locate_rows(candidate, lines, dimensions, crop):
+    """Prefer distinct OCR-matched rows; reject model placeholders covering the whole image."""
+    rows = []
+    valid_lines = [line for line in lines if isinstance(line, dict) and
+                   isinstance(line.get("page", 0), int) and isinstance(line.get("box"), (list, tuple)) and
+                   len(line["box"]) == 4 and all(isinstance(v, (int, float)) and math.isfinite(v) for v in line["box"])]
+    for line in sorted(valid_lines, key=lambda entry: (entry.get("page", 0), entry["box"][1], entry["box"][0])):
+        page, box = line.get("page", 0), line.get("box")
+        if not isinstance(page, int) or not 0 <= page < len(dimensions) or not isinstance(box, (list, tuple)) or len(box) != 4:
+            continue
+        if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in box):
+            continue
+        width, height = dimensions[page]
+        normalized = [box[0] / width, box[1] / height, box[2] / width, box[3] / height]
+        if crop and not (crop[0] <= (normalized[0] + normalized[2]) / 2 <= crop[2] and
+                         crop[1] <= (normalized[1] + normalized[3]) / 2 <= crop[3]):
+            continue
+        if rows and rows[-1]["page"] == page and abs(rows[-1]["box"][1] - normalized[1]) * height < 12:
+            row = rows[-1]
+            row["text"] += " " + str(line.get("text", ""))
+            row["box"] = [min(row["box"][0], normalized[0]), min(row["box"][1], normalized[1]),
+                          max(row["box"][2], normalized[2]), max(row["box"][3], normalized[3])]
+        else:
+            rows.append({"page": page, "text": str(line.get("text", "")), "box": normalized})
+    used = set()
+    for item in candidate.items:
+        words = re.sub(r"\W+", " ", item.description.casefold()).strip()
+        matched = next((index for index, row in enumerate(rows) if index not in used and words and
+                        words in re.sub(r"\W+", " ", row["text"].casefold()) and
+                        re.search(r"\d", row["text"])), None)
+        if matched is not None:
+            used.add(matched)
+            item.source_page, box = rows[matched]["page"], rows[matched]["box"]
+            if crop:
+                box = [(box[0] - crop[0]) / (crop[2] - crop[0]), (box[1] - crop[1]) / (crop[3] - crop[1]),
+                       (box[2] - crop[0]) / (crop[2] - crop[0]), (box[3] - crop[1]) / (crop[3] - crop[1])]
+            item.source_box = [max(0, min(1, value)) for value in box]
+        box = item.source_box
+        height = (box[3] - box[1]) * (crop[3] - crop[1] if crop else 1) if box else 0
+        if box is not None and (height > 0.4 or box[0] >= box[2] or box[1] >= box[3]):
+            item.source_box = None
 
 
 def _row_audit(candidate, crop):
@@ -406,7 +548,7 @@ def _row_audit(candidate, crop):
                         retained_count != len(candidate.items)}
 
 
-def _merge(candidate, current, crop, preserve_items=False):
+def _merge(candidate, current, crop, preserve_items=False, sources=None):
     initial = copy.deepcopy(current) if current is not None else {"currency": ""}
     draft = ReceiptData.model_validate(initial).model_dump()
     changed = []
@@ -433,6 +575,8 @@ def _merge(candidate, current, crop, preserve_items=False):
         item = copy.deepcopy(previous[match]) if match is not None else Item().model_dump()
         if match is not None:
             used.add(match)
+        if sources is not None:
+            sources.append((proposed, item["id"]))
         supplied = []
         for key in ("description", "quantity", "unit", "unit_price", "line_total"):
             value = getattr(proposed, key)
@@ -572,7 +716,7 @@ class VisionEngine:
                                   "Retry a smaller region or enter the values manually.") from exc
 
     def extract(self, pages, ocr_lines, examples=(), crop=None, model=DEFAULT_MODEL, current=None, stop=None,
-                preserve_items=False):
+                preserve_items=False, amount_first=False, capture_regions=False):
         started = time.monotonic()
         if model not in ALLOWED_MODELS:
             raise VisionError("Choose the local Qwen3-VL 2B or 4B instruct model in Vision setup.")
@@ -582,13 +726,23 @@ class VisionEngine:
         context = {"task": "Extract visible receipt values for a human to review.",
                    "ocr_lines": _ocr_context(ocr_lines, crop, dimensions),
                    "historical_examples": _example_context(examples)}
-        payload = {"model": model, "stream": False, "format": _output_schema(),
+        if amount_first:
+            context["amount_first"] = ("Read each row's Amount first, then its Quantity and Unit price. "
+                                       "Leave an uncertain factor blank; the app can derive it exactly from Amount "
+                                       "and one clearly read factor. Preserve independently written values and discounts.")
+        if capture_regions:
+            context["item_locations"] = ("For each item, return source_page as the zero-based supplied image index "
+                                         "and source_box as [left,top,right,bottom] in 0..1 image coordinates, "
+                                         "covering that item row. For a crop, coordinates refer to the crop. "
+                                         "Distinct visible repeated rows need distinct boxes. Return null for uncertain locations.")
+        payload = {"model": model, "stream": False, "format": _output_schema(capture_regions),
                    "messages": [{"role": "system", "content": SYSTEM_PROMPT},
                                 {"role": "user", "content": json.dumps(context, ensure_ascii=False), "images": images}],
                    "options": {"temperature": 0, "num_ctx": 8192, "num_predict": 4096}, "keep_alive": "2m"}
         partial_response = False
         recovery_notices = []
         previous_row_count = 0
+        removed_duplicates = 0
         for attempt in range(2):
             try:
                 proposed, recovered = self._read_receipt(payload, stop)
@@ -598,7 +752,10 @@ class VisionEngine:
                 partial_response = True
                 recovery_notices.append("Row recheck was malformed; kept the earlier extraction for review.")
                 break
-            proposed_notes = _normalize_candidate(proposed)
+            proposed_notes = _normalize_candidate(proposed, amount_first)
+            if capture_regions:
+                _locate_rows(proposed, ocr_lines, dimensions, crop)
+            removed_duplicates += _remove_duplicate_tail(proposed)
             proposed_audit = _row_audit(proposed, crop)
             partial_response = partial_response or recovered
             if attempt and recovered and proposed_audit["retained_item_count"] <= previous_row_count:
@@ -606,25 +763,49 @@ class VisionEngine:
                 break
             candidate, numeric_notes, row_audit = proposed, proposed_notes, proposed_audit
             previous_row_count = row_audit["retained_item_count"]
-            if recovered or not row_audit["mismatch"] or attempt == 1:
+            if recovered or (not row_audit["mismatch"] and not _duplicate_tail(candidate)) or attempt == 1:
                 break
             context["row_recheck"] = {
                 **row_audit,
+                "duplicate_last_row": _duplicate_tail(candidate),
                 "instruction": "The previous row audit disagreed with the output. Independently recount "
                                "occupied item rows on every supplied image from bottom to top, then extract "
                                "the complete receipt again in source order. Recheck quantity-adjacent units. "
                                "The previous count may be wrong; correct it from the image. Keep partly "
                                "readable rows, exclude blank/non-item rows, and never invent items to fit a count. "
+                               "If the final two items are identical, verify two distinct image rows exist; "
+                               "return the last row once unless two separate rows are visible. "
                                "Return the full JSON object, not a patch.",
             }
             payload["messages"][1]["content"] = json.dumps(context, ensure_ascii=False)
-        draft, fields = _merge(candidate, current, crop, preserve_items)
+        sources = []
+        draft, fields = _merge(candidate, current, crop, preserve_items, sources)
+        derived = _derive_from_amount(draft) if amount_first else []
+        regions = []
+        if capture_regions:
+            for proposed, item_id in sources:
+                if proposed.source_box is None or proposed.source_page is None or proposed.source_page >= len(pages):
+                    continue
+                box = proposed.source_box
+                if crop:
+                    box = [crop[0] + box[0] * (crop[2] - crop[0]), crop[1] + box[1] * (crop[3] - crop[1]),
+                           crop[0] + box[2] * (crop[2] - crop[0]), crop[1] + box[3] * (crop[3] - crop[1])]
+                index = next(i for i, item in enumerate(draft["items"]) if item["id"] == item_id)
+                regions.append({"item_id": item_id, "item_index": index, "page_index": proposed.source_page, "box": box})
         notices = ["Local vision suggestions require human verification. "
                    "Uncertain values stay blank or keep the current value. Missing units default to 'unit'."]
         if partial_response:
             notices.append("Recovered partial vision data from malformed or incomplete output. "
                            "Some fields or rows may be missing; check every recovered value against the image.")
         notices.extend(recovery_notices)
+        if removed_duplicates:
+            notices.append("Removed a repeated final item supported by the row count or identical source region. Check the image.")
+        if capture_regions and len(regions) < row_audit["retained_item_count"]:
+            notices.append("Some item locations could not be matched reliably; those image outlines are omitted.")
+        if _duplicate_tail(candidate):
+            notices.append("Final two items have identical details. Confirm there are two distinct receipt rows before verifying.")
+        for field, known in derived:
+            notices.append(f"Line {int(field.split('.')[1]) + 1}: derived {field.split('.')[2]} from Amount / {known}; check the original.")
         if row_audit["mismatch"]:
             expected = (str(candidate.visible_item_count) if candidate.visible_item_count is not None
                         else "an unknown number of")
@@ -646,7 +827,10 @@ class VisionEngine:
         provenance = {"source": "local_vision", "model": model, "page_count": len(pages), "crop": crop,
                       "historical_examples": len(context["historical_examples"]), "row_rechecks": attempt,
                       "partial_response": partial_response}
-        return {"draft": draft, "field_meta": {field: {**provenance, "line_ids": []} for field in fields},
+        metadata = {field: {**provenance, "line_ids": []} for field in fields}
+        metadata.update({field: {"source": "derived", "line_ids": [], "based_on": ["line_total", known]}
+                         for field, known in derived})
+        return {"draft": draft, "field_meta": metadata, "source_regions": regions,
                 "notice": " ".join(notices),
                 "model": model, "seconds": round(time.monotonic() - started, 3), "provenance": provenance,
                 "row_audit": row_audit}

@@ -108,3 +108,7 @@
   .settings-backup-list button { min-height: 32px; padding: 6px 9px; }
   .settings-dialog-footer { padding: 12px 16px; }
 }
+.vision-options { margin-top: 24px; }
+.vision-options label { font-weight: 600; }
+.vision-options p { margin: 6px 0 16px; font-size: 13px; max-width: 65ch; }
+.vision-options [role="status"]:empty { display: none; }

@@ -4,7 +4,8 @@ import { ArrowDown, ArrowDownToLine, ArrowUp, Check, ChevronLeft, ChevronRight, 
   RotateCw, Save, ShieldCheck, Trash2, Undo2, ZoomIn, ZoomOut } from 'lucide-react'
 import { ApiError, api, download, post } from './api'
 import { displayDate, inputDate } from './purchaseDate'
-import type { Issue, Receipt, ReceiptData } from './types'
+import type { Issue, Receipt, ReceiptData, VisionSettings } from './types'
+import { visionOverlay } from './visionOverlay'
 import PhotoField from './PhotoField'
 import { completeAmounts } from './amount'
 import ReceiptAssistance from './ReceiptAssistance'
@@ -57,6 +58,7 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
   const [acknowledged, setAcknowledged] = useState<Set<string>>(new Set())
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
+  const [overlayBusy, setOverlayBusy] = useState(false)
   const [conflict, setConflict] = useState(false)
   const conflictRef = useRef(false)
   const [history, setHistory] = useState<{ revision: number; action: string; reviewer: string; created_at: string }[]>([])
@@ -86,6 +88,13 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
   }, [id])
 
   useEffect(() => { void load().catch((e: Error) => onError(e.message)) }, [load]) // eslint-disable-line
+  useEffect(() => {
+    const changed = (event: Event) => setReceipt(value => value ? {
+      ...value, vision_settings: (event as CustomEvent<VisionSettings>).detail,
+    } : value)
+    window.addEventListener('receiptiq:vision-settings', changed)
+    return () => window.removeEventListener('receiptiq:vision-settings', changed)
+  }, [])
 
   const save = useCallback(async () => {
     if (conflictRef.current) throw new Error('Your draft is kept. Resolve the saved-version conflict before leaving.')
@@ -290,6 +299,26 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
   const warnings = receipt.issues.filter(issue => !issue.blocking)
   const totalIssues = receipt.issues.filter(issue => issue.field === 'total' || issue.field === 'item_sum')
   const highlighted = receipt.evidence.lines.filter(line => highlight.includes(line.id) && line.page === page)
+  const overlay = currentPage ? visionOverlay(receipt, draft, currentPage.id) : []
+  const showOverlay = !!receipt.vision_settings?.capture_regions
+
+  async function toggleOverlay(checked: boolean) {
+    const previous = receipt?.vision_settings
+    setReceipt(value => value ? { ...value, vision_settings: {
+      amount_first: value.vision_settings?.amount_first || false, capture_regions: checked,
+    } } : value)
+    setOverlayBusy(true)
+    try {
+      const settings = await api<VisionSettings>('/vision/settings', {
+        method: 'PATCH', body: JSON.stringify({ capture_regions: checked }),
+      })
+      setReceipt(value => value ? { ...value, vision_settings: settings } : value)
+    } catch (error) {
+      setReceipt(value => value ? { ...value, vision_settings: previous } : value)
+      onError((error as Error).message)
+    }
+    finally { setOverlayBusy(false) }
+  }
 
   return <>
     <section className="image-panel" aria-label="Receipt image">
@@ -310,6 +339,13 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
         }}>Reset view</button>
         <button aria-label="Rotate preview clockwise" title="Rotate preview 90 degrees without rerunning OCR"
           disabled={!image}
+      <div className="vision-overlay-controls">
+        <label><input type="checkbox" checked={showOverlay} disabled={overlayBusy}
+          onChange={event => void toggleOverlay(event.target.checked)} /> Show AI line numbers</label>
+        {showOverlay && <p>{!overlay.length ? 'Run Vision again to locate the item rows.' :
+          overlay.some(region => region.suggested) ? 'Suggested lines. Apply vision to place them in the receipt details.' :
+          'Numbers match the receipt detail lines. Check the image before verifying.'}</p>}
+      </div>
           onClick={rotatePreview}><RotateCw size={16} /> Rotate</button>
         <button aria-label="Delete receipt" title={pending ? 'Wait for processing to finish before deleting' : 'Delete this receipt'}
           disabled={pending || busy || photosBusy} onClick={() => void deleteReceipt()}><Trash2 size={16} /> Delete</button>
@@ -336,6 +372,15 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
         {image ? <div className="receipt-image" style={{ width: zoom + '%',
           aspectRatio: viewRotation % 180 ? imageSize[1] / imageSize[0] : imageSize[0] / imageSize[1] }}>
           <div style={{ position: 'absolute', left: '50%', top: '50%',
+          {showOverlay && !directPhoto && currentPage && variant === 'processed' && overlay.length > 0 &&
+            <svg className="vision-row-overlay" viewBox="0 0 1000 1000" preserveAspectRatio="none"
+              role="img" aria-label="AI detected item rows">
+              {overlay.map((region, index) => <g key={index}><title>{region.title}</title>
+                <rect x={region.box[0] * 1000} y={region.box[1] * 1000}
+                  width={(region.box[2] - region.box[0]) * 1000} height={(region.box[3] - region.box[1]) * 1000} />
+                <text x={region.box[0] * 1000 + 5} y={region.box[1] * 1000 + 21}>{region.line}</text>
+              </g>)}
+            </svg>}
             width: (viewRotation % 180 ? imageSize[0] / imageSize[1] * 100 : 100) + '%',
             transform: `translate(-50%, -50%) rotate(${viewRotation}deg)` }}>
           <img src={image} draggable={false} alt={'Receipt page ' + (page + 1)}

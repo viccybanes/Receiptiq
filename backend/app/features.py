@@ -25,16 +25,26 @@ from .retrieval import Retrieval
 from .service import edit_receipt, require_mutable_receipt, require_receipt
 from .system import capabilities, setup_status, stage_location, start_setup
 from .templates import TemplateConflict, delete_template, get_template, save_template
+from .vision_settings import VisionSettings, load_vision_settings, save_vision_settings
 
 
 def view_receipt(store, receipt_id):
     result = require_receipt(store, receipt_id)
     result["issues"] = receipt_issues(result)
     result["reconciliation"] = reconcile(result["data"])
+    result["vision_settings"] = load_vision_settings(store.root).model_dump()
     return result
 
 
 def install_routes(app, store, worker):
+    @app.get("/api/v1/vision/settings")
+    def vision_settings():
+        return load_vision_settings(store.root)
+
+    @app.patch("/api/v1/vision/settings")
+    def update_vision_settings(body: VisionSettings):
+        return save_vision_settings(store.root, body)
+
     @app.get("/api/v1/system/capabilities")
     def hardware():
         return capabilities(store.root)

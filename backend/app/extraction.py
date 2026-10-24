@@ -190,6 +190,8 @@ def validate(data):
         prefix = f"items.{i}"
         if not item["description"]:
             issue(prefix + ".description", f"Item {i + 1} needs a description.", True)
+        if item.get("unit") and not re.search(r"[A-Za-z]", item["unit"]):
+            issue(prefix + ".unit", "Unit must name a unit such as pcs, mtrs, boxes, gals, or kgs; it cannot be a number.", True)
         values = {}
         for key in ("quantity", "unit_price", "line_total"):
             if item[key]:

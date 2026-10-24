@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Archive, ArrowDownToLine, Check, Cpu, Download, FileSpreadsheet, LoaderCircle, RefreshCw, X } from 'lucide-react'
 import { api, download, post } from './api'
 import TemplatesEditor from './TemplatesEditor'
+import type { VisionSettings } from './types'
 import './settings.css'
 
 type Profile = 'ocr-only' | '2b' | '4b'
@@ -40,6 +41,9 @@ export default function WorkspaceSettings({ onClose, onTemplatesChanged }: Props
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null)
   const [status, setStatus] = useState<SetupStatus | null>(null)
   const [profile, setProfile] = useState<Profile>('2b')
+  const [visionSettings, setVisionSettings] = useState<VisionSettings | null>(null)
+  const [visionSaving, setVisionSaving] = useState(false)
+  const [visionMessage, setVisionMessage] = useState('')
   const [loading, setLoading] = useState(true)
   const [installing, setInstalling] = useState(false)
   const [error, setError] = useState('')
@@ -75,6 +79,24 @@ export default function WorkspaceSettings({ onClose, onTemplatesChanged }: Props
     finally { setLoading(false) }
   }, [])
   useEffect(() => { void loadSetup() }, [loadSetup])
+  useEffect(() => {
+    void api<VisionSettings>('/vision/settings').then(setVisionSettings).catch(cause => setError((cause as Error).message))
+  }, [])
+
+  async function changeVision(key: keyof VisionSettings, checked: boolean) {
+    const previous = visionSettings
+    setVisionSettings(value => value ? { ...value, [key]: checked } : value)
+    setVisionSaving(true); setVisionMessage(''); setError('')
+    try {
+      const saved = await api<VisionSettings>('/vision/settings', {
+        method: 'PATCH', body: JSON.stringify({ [key]: checked }),
+      })
+      setVisionSettings(saved)
+      window.dispatchEvent(new CustomEvent('receiptiq:vision-settings', { detail: saved }))
+      setVisionMessage('Saved. These options apply to the next Vision run.')
+    } catch (cause) { setVisionSettings(previous); setError((cause as Error).message) }
+    finally { setVisionSaving(false) }
+  }
   useEffect(() => {
     if (!activeSetup) return
     let cancelled = false
@@ -206,6 +228,16 @@ export default function WorkspaceSettings({ onClose, onTemplatesChanged }: Props
           <div className="settings-save-row"><span className="settings-muted">Setup can continue while you review receipts.</span>
             <button type="button" className="primary" disabled={setupBusy || !capabilities || locationBusy} onClick={() => void install()}>
               {setupBusy ? <LoaderCircle size={16} className="spin" /> : <Download size={16} />}{setupBusy ? 'Installing…' : 'Install selected profile'}</button></div>
+          <fieldset className="settings-plain-fieldset vision-options" disabled={!visionSettings || visionSaving}>
+            <legend>Vision reading options</legend>
+            <label><input type="checkbox" checked={!!visionSettings?.amount_first}
+              onChange={event => void changeVision('amount_first', event.target.checked)} /> Read Amount first</label>
+            <p>Use a clear Amount and one readable factor to fill a missing Quantity or Unit price exactly. Written values and possible discounts stay available for review.</p>
+            <label><input type="checkbox" checked={!!visionSettings?.capture_regions}
+              onChange={event => void changeVision('capture_regions', event.target.checked)} /> Show AI line numbers on photos</label>
+            <p>Locate item rows during Vision so numbered outlines can be compared with the receipt details. May increase processing time; existing receipts need another Vision run.</p>
+            <p role="status">{visionSaving ? 'Saving reading options…' : visionMessage}</p>
+          </fieldset>
           <div className="settings-location"><h3>Workspace location</h3>
             {capabilities?.workspace_location?.location_error && <p className="settings-inline-error" role="alert">
               {capabilities.workspace_location.location_error}</p>}

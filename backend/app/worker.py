@@ -12,6 +12,7 @@ from .models import ReceiptData
 from .ocr import PaddleEngine
 from .retrieval import Retrieval
 from .vision import ALLOWED_MODELS, DEFAULT_MODEL, VisionEngine
+from .vision_settings import load_vision_settings
 
 logger = logging.getLogger(__name__)
 MAX_VISION_ATTEMPTS = 3
@@ -100,17 +101,39 @@ class Worker:
             return
         examples = self.retrieval.search(receipt["id"])
         self.store.execute("UPDATE jobs SET stage='Reading with local vision',progress=20 WHERE id=?", (job["id"],))
-        lines = [line for line in receipt["evidence"]["lines"] if line["page"] == page["page_number"]]
-        image_paths = [self.store.file(page["processed_path"])]
-        if payload.get("auto_apply"):
-            image_paths = [self.store.file(row["processed_path"]) for row in self.store.read(
-                "SELECT processed_path FROM document_pages WHERE receipt_id=? ORDER BY page_number", (receipt["id"],))]
+        selected_pages = self.store.read("SELECT * FROM document_pages WHERE receipt_id=? ORDER BY page_number",
+                                         (receipt["id"],)) if payload.get("auto_apply") else [page]
+        image_paths = [self.store.file(row["processed_path"]) for row in selected_pages]
+        page_numbers = {row["page_number"]: index for index, row in enumerate(selected_pages)}
+        lines = [{**line, "page": page_numbers[line["page"]]} for line in receipt["evidence"]["lines"]
+                 if line["page"] in page_numbers]
+        options = load_vision_settings(self.store.root).model_dump()
+        location_notice = ""
+        if options["capture_regions"] and not lines:
+            self.store.execute("UPDATE jobs SET stage='Locating item rows' WHERE id=?", (job["id"],))
+            try:
+                for index, path in enumerate(image_paths):
+                    lines.extend({**line, "page": index} for line in self.engine.recognize(path))
+                    if self.cancelled(job):
+                        return
+            except Exception:
+                location_notice = " Local row-location reading was unavailable; only usable Vision locations are shown."
         result = self.vision.extract(image_paths, lines, examples=examples,
+                                     **options,
                                      crop=payload.get("crop"), model=payload["model"],
                                      current=receipt["data"], stop=lambda: self.cancelled(job),
                                      preserve_items=len(receipt["pages"]) > 1 and not payload.get("auto_apply"))
         if self.cancelled(job):
             return
+        if location_notice:
+            result["notice"] = result.get("notice", "") + location_notice
+        for region in result.get("source_regions", []):
+            region["page_id"] = selected_pages[region["page_index"]]["id"]
+        for field, metadata in result.get("field_meta", {}).items():
+            region = next((entry for entry in result.get("source_regions", [])
+                           if field.startswith(f"items.{entry['item_index']}.")), None)
+            if region:
+                metadata.update({"source_box": region["box"], "page_id": region["page_id"]})
         result["base_revision"] = receipt["revision"]
         result["photo_id"] = receipt["data"]["receipt_photo_id"]
         result["examples"] = examples

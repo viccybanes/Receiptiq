@@ -603,7 +603,7 @@ def test_row_audit_recovers_items_despite_invalid_counts(page, runtime, count):
 
 @pytest.mark.parametrize(('raw', 'unit', 'quantity', 'expected_unit'), [
     ('20 boxes', '', '20', 'boxes'), ('5pcs', '', '5', 'pcs'),
-    ('5 pcs.', 'unit', '5', 'pcs.'), ('2.000 kg', '', '2000', 'kg'),
+    ('5 pcs.', 'unit', '5', 'pcs'), ('2.000 kg', '', '2000', 'kgs'),
     ('5 PCS', 'pcs', '5', 'pcs'), ('5 pcs', 'boxes', '', 'boxes'),
     ('1.5 pcs', '', '', 'unit'), ('5 x', '', '', 'unit'),
     ('5 @ 10', '', '', 'unit'),

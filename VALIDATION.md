@@ -1,5 +1,12 @@
 # ReceiptIQ validation
 
+## Vision units, duplicate tails, Amount preference, and row overlays — 2026-10-25
+
+- Backend: **314 tests passed** (113.98s), with one existing Starlette/AnyIO deprecation warning. Changed Python files passed Ruff. Production TypeScript/Vite build and exact Amount/completion checks passed.
+- Regressions cover numeric Unit rejection, unit aliases, combined Quantity/unit recovery despite a numeric Unit slot, opt-in recovery of shifted Unit/Unit price columns, duplicate tail removal versus genuine repeated purchases, recount replacement without appending, exact Amount-based derivation, preservation of discounts, strict persisted preferences, and crop/page/item-ID source mapping. An isolated worker test proves saved settings reach extraction and locations/derived fields persist.
+- Real local Qwen3-VL 2B with local OCR context, Amount first, and location capture read two printed synthetic receipts: **6/6 item rows retained with expected quantities, units, Unit prices, and Amounts**, including both genuinely repeated last items. All six received distinct row locations. The initial probe exposed numeric column shifts and whole-page placeholder boxes; the added regressions cover those failures. Reports: ignored `artifacts/vision-options/local-model-report*.json`. This is a two-image printed check, not handwriting accuracy or a performance benchmark.
+- `node frontend/tests/visionOptions.mjs` passed with an isolated static server and entirely mocked APIs: settings, overlay toggles, numbering, preview rotation, stable-ID reorder mapping, changed-photo exclusion, and desktop/mobile layouts. Screenshot inspection confirmed the added controls and outlines. No user receipts were changed by these checks. Existing installer bundles were not rebuilt.
+
 ## Partial vision recovery — 2026-10-25
 
 - Backend: **284 tests passed** (115.12s), with one existing Starlette/AnyIO deprecation warning. Changed Python files passed Ruff and `git diff --check`.
