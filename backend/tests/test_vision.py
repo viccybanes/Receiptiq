@@ -84,15 +84,19 @@ def test_structured_local_request_and_provenance(page, runtime, monkeypatch):
     assert not {"tax", "subtotal", "discount", "receipt_photo_id"} & payload["format"]["properties"].keys()
     assert "untrusted data" in payload["messages"][0]["content"]
     prompt = payload["messages"][0]["content"]
-    assert "printed PIVUT must remain PIVUT" in prompt
+    assert "PIVUT" not in prompt and "PIVOT" not in prompt
+    assert "Preserve printed spelling exactly" in prompt
     assert "Only for clearly handwritten ordinary words" in prompt
     assert "Do not use an item description as Vendor" in prompt
     assert "Count repeated zeros digit by digit" in prompt
-    assert "Quantities over 99 are rare" in prompt
+    assert "Recheck quantities over 99" in prompt
     assert "Preserve leading zeros in receipt codes" in prompt
     assert "re-scan the image" in prompt
     assert "identical repeated" in prompt
     assert "Never fabricate rows or values to satisfy a count" in prompt
+    assert "Separate quantity from unit" in prompt
+    assert "Do not fill the list to its maximum length" in prompt
+    assert "notes: only remarks visibly written on the receipt" in prompt
     count_schema = payload['format']['properties']['visible_item_count']
     assert {'type': 'integer', 'minimum': 0, 'maximum': 1000} in count_schema['anyOf']
     assert {'type': 'null'} in count_schema['anyOf']
