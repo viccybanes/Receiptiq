@@ -97,6 +97,11 @@ def test_structured_local_request_and_provenance(page, runtime, monkeypatch):
     assert "Separate quantity from unit" in prompt
     assert "Do not fill the list to its maximum length" in prompt
     assert "notes: only remarks visibly written on the receipt" in prompt
+    assert "A row with its own quantity, unit price, or amount is a separate item" in prompt
+    assert "blank description, dash, quote/ditto mark" in prompt
+    assert "replace the differing attribute" in prompt
+    assert "Never carry over quantity, unit price, or amount" in prompt
+    assert "If the reference is unclear or outside the crop" in prompt
     count_schema = payload['format']['properties']['visible_item_count']
     assert {'type': 'integer', 'minimum': 0, 'maximum': 1000} in count_schema['anyOf']
     assert {'type': 'null'} in count_schema['anyOf']

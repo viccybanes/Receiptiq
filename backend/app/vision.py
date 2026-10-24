@@ -48,12 +48,21 @@ Evidence:
 Rows:
 - Read the header, item table, then final amount due. Inventory distinct item rows
   in reading order; exclude headings, blank lines, tax, totals, and payments.
-  Wrapped descriptions count once; identical repeated item rows remain separate.
+  Wrapped descriptions without separate numeric cells count once; identical repeated
+  item rows remain separate.
+- A row with its own quantity, unit price, or amount is a separate item even with
+  a blank description, dash, quote/ditto mark, or other repetition symbol.
+  When layout and context clearly refer to the preceding item, carry forward only
+  its shared description wording. Apply visible variation text to replace the differing attribute
+  (color, finish, size, or model), retaining the supported brand/product wording.
+  Never carry over quantity, unit price, or amount; read each row's own cells.
+  If the reference is unclear or outside the crop, keep only legible wording and
+  flag the uncertain description in reading_notes rather than guessing or dropping the row.
 - Return visible_item_count, or null if boundaries are unclear. Keep partly
   readable rows with uncertain fields blank. Report wholly unreadable rows for review.
 - Before returning, re-scan the image for skipped rows and compare with items.
   Never fabricate rows or values to satisfy a count.
-- Follow column alignment; do not move values between rows or columns. Preserve
+- Follow column alignment; do not move numeric values between rows or columns. Preserve
   legible dimensions, inch marks, and model codes without guessing overwritten text.
 
 Receipt fields:
