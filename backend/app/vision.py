@@ -15,6 +15,7 @@ from datetime import date
 from pathlib import Path
 
 from pydantic import Field, ValidationError
+from pydantic_core import from_json
 
 from .extraction import decimal, extraction_date, validate
 from .imaging import MAX_PAGES, inspect_file
@@ -122,6 +123,10 @@ class VisionError(RuntimeError):
     """An actionable local inference failure; manual entry remains available."""
 
 
+class _MalformedReply(VisionError):
+    """No usable receipt fields could be recovered from this reply."""
+
+
 class VisionItem(StrictModel):
     description: str = Field(default="", max_length=2000)
     quantity: str = Field(default="", max_length=32)
@@ -153,6 +158,59 @@ def _output_schema():
     item_schema["required"] = list(item_schema["properties"])
     item_schema["properties"]["item_type"]["enum"] = list(ITEM_TYPES)
     return schema
+
+
+def _recover_fields(model, values):
+    """Validate fields separately so one malformed value does not discard its row."""
+    recovered = {}
+    for key, value in values.items():
+        field = model.model_fields.get(key)
+        if field is None or key == "items":
+            continue
+        if field.annotation is str and isinstance(value, (int, float)) and not isinstance(value, bool):
+            if isinstance(value, float) and not math.isfinite(value):
+                continue
+            value = str(value)
+        try:
+            recovered[key] = getattr(model.model_validate({key: value}), key)
+        except ValidationError:
+            continue
+    return recovered
+
+
+def _parse_receipt(content, incomplete=False):
+    try:
+        if not incomplete:
+            return VisionReceipt.model_validate_json(content), False
+    except ValidationError:
+        pass
+    try:
+        # Keep completed JSON values, including fields in an unfinished final row.
+        # Never complete cut-off strings or repair JSON with made-up values.
+        opening = re.search(r"[\[{]", content)
+        if opening is None:
+            raise ValueError("No JSON object or array")
+        values = from_json(content[opening.start():], allow_partial=True)
+        if isinstance(values, list):
+            values = {"items": values}
+        if not isinstance(values, dict):
+            raise ValueError("Not receipt data")
+        fields = _recover_fields(VisionReceipt, values)
+        items = values.get("items", [])
+        if isinstance(items, dict):
+            items = [items]
+        fields["items"] = [_recover_fields(VisionItem, item) for item in items[:1000]
+                           if isinstance(item, dict)] if isinstance(items, list) else []
+        candidate = VisionReceipt.model_validate(fields)
+        if not (any(getattr(candidate, key) for key in
+                    ("supplier", "receipt_number", "receipt_date", "currency", "total", "notes")) or
+                any(any(getattr(item, key).strip() for key in
+                        ("description", "quantity", "unit_price", "line_total")) for item in candidate.items)):
+            raise ValueError("No recoverable fields")
+        return candidate, True
+    except (ValueError, TypeError) as exc:
+        raise _MalformedReply("Local vision returned malformed receipt data with no usable fields. "
+                              "Retry a smaller region or enter the values manually.") from exc
 
 
 def _crop_rect(crop):
@@ -503,15 +561,15 @@ class VisionEngine:
             reply = json.loads(raw)
             if isinstance(reply, dict) and reply.get("error"):
                 raise _runtime_error(str(reply["error"]))
-            if not isinstance(reply, dict) or not reply.get("done"):
-                raise ValueError("Incomplete local response")
+            if not isinstance(reply, dict):
+                raise ValueError("Missing local response")
             content = reply["message"]["content"]
             if not isinstance(content, str):
                 raise ValueError("Missing JSON content")
-            candidate = VisionReceipt.model_validate_json(content)
-        except (ValueError, KeyError, TypeError, ValidationError) as exc:
-            raise VisionError("Local vision returned malformed receipt data. Retry a smaller region or enter the values manually.") from exc
-        return candidate
+            return _parse_receipt(content, incomplete=not reply.get("done"))
+        except (ValueError, KeyError, TypeError) as exc:
+            raise _MalformedReply("Local vision returned malformed receipt data with no usable fields. "
+                                  "Retry a smaller region or enter the values manually.") from exc
 
     def extract(self, pages, ocr_lines, examples=(), crop=None, model=DEFAULT_MODEL, current=None, stop=None,
                 preserve_items=False):
@@ -528,11 +586,27 @@ class VisionEngine:
                    "messages": [{"role": "system", "content": SYSTEM_PROMPT},
                                 {"role": "user", "content": json.dumps(context, ensure_ascii=False), "images": images}],
                    "options": {"temperature": 0, "num_ctx": 8192, "num_predict": 4096}, "keep_alive": "2m"}
+        partial_response = False
+        recovery_notices = []
+        previous_row_count = 0
         for attempt in range(2):
-            candidate = self._read_receipt(payload, stop)
-            numeric_notes = _normalize_candidate(candidate)
-            row_audit = _row_audit(candidate, crop)
-            if not row_audit["mismatch"] or attempt == 1:
+            try:
+                proposed, recovered = self._read_receipt(payload, stop)
+            except _MalformedReply:
+                if attempt == 0:
+                    raise
+                partial_response = True
+                recovery_notices.append("Row recheck was malformed; kept the earlier extraction for review.")
+                break
+            proposed_notes = _normalize_candidate(proposed)
+            proposed_audit = _row_audit(proposed, crop)
+            partial_response = partial_response or recovered
+            if attempt and recovered and proposed_audit["retained_item_count"] <= previous_row_count:
+                recovery_notices.append("Row recheck was incomplete; kept the earlier extraction for review.")
+                break
+            candidate, numeric_notes, row_audit = proposed, proposed_notes, proposed_audit
+            previous_row_count = row_audit["retained_item_count"]
+            if recovered or not row_audit["mismatch"] or attempt == 1:
                 break
             context["row_recheck"] = {
                 **row_audit,
@@ -547,6 +621,10 @@ class VisionEngine:
         draft, fields = _merge(candidate, current, crop, preserve_items)
         notices = ["Local vision suggestions require human verification. "
                    "Uncertain values stay blank or keep the current value. Missing units default to 'unit'."]
+        if partial_response:
+            notices.append("Recovered partial vision data from malformed or incomplete output. "
+                           "Some fields or rows may be missing; check every recovered value against the image.")
+        notices.extend(recovery_notices)
         if row_audit["mismatch"]:
             expected = (str(candidate.visible_item_count) if candidate.visible_item_count is not None
                         else "an unknown number of")
@@ -566,7 +644,8 @@ class VisionEngine:
         notices.extend(issue["message"] for issue in validate(draft)
                        if issue["field"] == "item_sum" or issue["field"].endswith(".arithmetic"))
         provenance = {"source": "local_vision", "model": model, "page_count": len(pages), "crop": crop,
-                      "historical_examples": len(context["historical_examples"]), "row_rechecks": attempt}
+                      "historical_examples": len(context["historical_examples"]), "row_rechecks": attempt,
+                      "partial_response": partial_response}
         return {"draft": draft, "field_meta": {field: {**provenance, "line_ids": []} for field in fields},
                 "notice": " ".join(notices),
                 "model": model, "seconds": round(time.monotonic() - started, 3), "provenance": provenance,

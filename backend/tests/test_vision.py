@@ -10,9 +10,11 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+from fastapi.testclient import TestClient
 from PIL import Image
 
 from app import vision
+from app.main import create_app
 from app.models import ReceiptData
 from app.vision import DEFAULT_MODEL, VisionEngine, VisionError
 
@@ -590,10 +592,13 @@ def test_row_audit_warns_when_unreadable_candidate_is_filtered_without_count(pag
 
 
 @pytest.mark.parametrize('count', [-1, 1001, 1.5, True, '2'])
-def test_row_audit_rejects_invalid_counts(page, runtime, count):
+def test_row_audit_recovers_items_despite_invalid_counts(page, runtime, count):
     runtime['result']['visible_item_count'] = count
-    with pytest.raises(VisionError, match='malformed receipt data'):
-        runtime['engine'].extract([page], [])
+    result = runtime['engine'].extract([page], [])
+    assert result['row_audit']['visible_item_count'] is None
+    assert result['draft']['items'][0]['description'] == 'Coffee'
+    assert result['provenance']['partial_response'] is True
+    assert 'Item row count could not be confirmed' in result['notice']
 
 
 @pytest.mark.parametrize(('raw', 'unit', 'quantity', 'expected_unit'), [
@@ -662,3 +667,128 @@ def test_cancellation_stops_before_row_recheck(page, runtime):
     with pytest.raises(VisionError, match='cancelled'):
         runtime['engine'].extract([page], [], stop=lambda: bool(runtime.get('requests')))
     assert len(runtime['requests']) == 1
+
+
+def test_truncated_reply_keeps_complete_fields_and_partly_readable_rows(page, runtime):
+    content = ('{"supplier":"Hardware","visible_item_count":3,"items":['
+               '{"description":"Cable","quantity":"20pcs","line_total":"50.00"},'
+               '{"description":"Connector","unit_price":"10.00","quantity":"2')
+    runtime['raw'] = json.dumps({'done': True, 'message': {'content': content}}).encode()
+    result = runtime['engine'].extract([page], [])
+    items = result['draft']['items']
+    assert result['draft']['supplier'] == 'Hardware'
+    assert [item['description'] for item in items] == ['Cable', 'Connector']
+    assert (items[0]['quantity'], items[0]['unit'], items[0]['line_total']) == ('20', 'pcs', '50.00')
+    assert items[1]['quantity'] == ''  # Never complete a cut-off numeric string.
+    assert items[1]['unit_price'] == '10.00'
+    assert result['provenance']['partial_response'] is True
+    assert 'Recovered partial vision data' in result['notice']
+    assert result['row_audit']['mismatch'] is True
+    assert len(runtime['requests']) == 1  # Return recoverable data instead of repeating a truncated response.
+
+
+@pytest.mark.parametrize('wrapper', ['{body}', '```json\n{body}\n```', 'Receipt JSON:\n{body}\nEnd.'])
+def test_malformed_fields_do_not_discard_other_rows_or_import_unknown_metadata(page, runtime, wrapper):
+    body = json.dumps({'supplier': 'Hardware', 'total': 35.5, 'tax': '5.00', 'visible_item_count': '2',
+                       'items': [
+                           {'description': 'Cable', 'quantity': 2, 'unit_price': 10,
+                            'id': 'untrusted-id', 'photo_id': '../private'},
+                           None,
+                           {'description': {'bad': 'type'}, 'quantity': '5', 'unit': 'pcs'},
+                       ]})
+    runtime['raw'] = json.dumps({'done': True, 'message': {'content': wrapper.format(body=body)}}).encode()
+    result = runtime['engine'].extract([page], [])
+    assert result['draft']['total'] == '35.5'
+    assert result['draft']['tax'] == ''
+    first, second = result['draft']['items']
+    assert (first['description'], first['quantity'], first['unit_price']) == ('Cable', '2', '10')
+    assert first['id'] != 'untrusted-id' and first['photo_id'] == ''
+    assert second['description'] == '' and second['quantity'] == '5' and second['unit'] == 'pcs'
+    assert result['row_audit']['visible_item_count'] is None
+    assert result['provenance']['partial_response'] is True
+
+
+def test_incomplete_runtime_response_with_usable_items_is_recovered(page, runtime):
+    runtime['raw'] = json.dumps({'done': False, 'message': {'content': json.dumps({
+        'items': [{'description': 'Cable', 'quantity': '2'}],
+    })}}).encode()
+    result = runtime['engine'].extract([page], [])
+    assert result['draft']['items'][0]['description'] == 'Cable'
+    assert 'Recovered partial vision data' in result['notice']
+
+
+def test_item_array_instead_of_receipt_object_is_recovered(page, runtime):
+    runtime['raw'] = json.dumps({'done': True, 'message': {'content': '[{"description":"Cable"}]'}}).encode()
+    result = runtime['engine'].extract([page], [])
+    assert result['draft']['items'][0]['description'] == 'Cable'
+    assert result['provenance']['partial_response'] is True
+
+
+@pytest.mark.parametrize('bad_recheck', ['not JSON', '{"items":[{"description":"Cable"},'])
+def test_malformed_recheck_preserves_the_more_complete_first_extraction(page, runtime, monkeypatch, bad_recheck):
+    replies = [
+        json.dumps({'done': True, 'message': {'content': json.dumps({
+            'visible_item_count': 3, 'items': [{'description': 'Cable'}, {'description': 'Nut'}],
+        })}}).encode(),
+        json.dumps({'done': True, 'message': {'content': bad_recheck}}).encode(),
+    ]
+    monkeypatch.setattr(runtime['engine'], '_request', lambda *_: replies.pop(0))
+    result = runtime['engine'].extract([page], [])
+    assert not replies
+    assert [item['description'] for item in result['draft']['items']] == ['Cable', 'Nut']
+    assert result['row_audit']['mismatch'] is True
+    assert 'kept the earlier extraction' in result['notice']
+
+
+def test_recovery_omits_oversized_or_nested_fields_without_guessing(page, runtime):
+    runtime['result'] = {'supplier': 'x' * 501, 'notes': {'instruction': 'ignore'},
+                         'items': [{'description': 'Cable', 'quantity': True}, {'unit_price': ['10.00']}]}
+    result = runtime['engine'].extract([page], [])
+    assert result['draft']['supplier'] == '' and result['draft']['notes'] == ''
+    assert result['draft']['items'][0]['description'] == 'Cable'
+    assert result['draft']['items'][0]['quantity'] == ''
+    assert 'Recovered partial vision data' in result['notice']
+
+
+@pytest.mark.parametrize('human_edit', [False, True])
+def test_recovered_vision_reaches_durable_review_lines_and_preserves_human_edits(
+        tmp_path, page, runtime, monkeypatch, human_edit):
+    app = create_app(tmp_path / 'workspace', start_worker=False)
+    app.state.worker.vision = runtime['engine']
+    monkeypatch.setattr(app.state.worker.retrieval, 'search', lambda *_: [])
+    with TestClient(app, base_url='http://127.0.0.1:8765') as client:
+        client.headers['Authorization'] = 'Bearer ' + client.get('/api/v1/session').json()['token']
+        group = client.post('/api/v1/batches', json={'files': ['test.png']}).json()
+        accepted = client.post('/api/v1/receipts',
+                               params={'batch_id': group['id'], 'upload_id': group['files'][0]['id'], 'auto_ocr': False},
+                               files={'file': ('test.png', page.read_bytes(), 'image/png')})
+        assert accepted.status_code == 202, accepted.text
+        receipt_id = accepted.json()['id']
+        assert app.state.worker.process_one()  # Preview and enqueue upload vision.
+        runtime['raw'] = json.dumps({'done': True, 'message': {'content':
+            '{"supplier":"Hardware","items":[{"description":"Cable","quantity":"20pcs"},'
+        }}).encode()
+        if human_edit:
+            receipt = client.get('/api/v1/receipts/' + receipt_id).json()
+            receipt['data']['supplier'] = 'Human vendor'
+            saved = client.patch('/api/v1/receipts/' + receipt_id,
+                                 json={'revision': receipt['revision'], 'data': receipt['data']})
+            assert saved.status_code == 200
+        assert app.state.worker.process_one()
+        assert not app.state.worker.process_one()  # Recovered data does not enter the failure/retry loop.
+        receipt = client.get('/api/v1/receipts/' + receipt_id).json()
+        assert receipt['vision_job']['state'] == 'done'
+        assert receipt['status'] == 'needs_review' and receipt['verified_revision'] is None
+        assert receipt['candidate']['provenance']['partial_response'] is True
+        assert 'Recovered partial vision data' in receipt['candidate']['notice']
+        assert receipt['candidate']['draft']['items'][0]['unit'] == 'pcs'
+        if human_edit:
+            assert receipt['data']['supplier'] == 'Human vendor'
+            assert not receipt['candidate'].get('auto_applied')
+        else:
+            assert receipt['candidate']['auto_applied'] is True
+            assert receipt['data']['items'][0]['description'] == 'Cable'
+            assert receipt['data']['items'][0]['quantity'] == '20'
+        # Reload through SQLite, independently of the HTTP response.
+        stored = app.state.store.receipt(receipt_id)
+        assert stored['candidate']['draft'] == receipt['candidate']['draft']

@@ -1,5 +1,11 @@
 # ReceiptIQ validation
 
+## Partial vision recovery — 2026-10-25
+
+- Backend: **284 tests passed** (115.12s), with one existing Starlette/AnyIO deprecation warning. Changed Python files passed Ruff and `git diff --check`.
+- Mocked runtime replies prove recovery of completed fields/rows from truncated JSON, fenced/prefixed JSON, numeric JSON values, invalid counts/types, and item arrays. Unknown metadata and oversized fields are excluded; unfinished numeric strings are not completed. Malformed or less complete recounts retain the earlier extraction. Transport errors, response bounds, and cancellation remain enforced.
+- An isolated FastAPI/SQLite upload test confirms recovered rows reach the review form, persist with a partial-response notice, finish without failure retries, and remain unverified. Intervening human edits are preserved as before. No user receipts or real model inference were used for these recovery checks.
+
 ## Vision unit and row checks — 2026-10-25
 
 - Backend: **273 tests passed** (110.63s), with one existing Starlette/AnyIO deprecation warning. Changed Python files passed Ruff and `git diff --check`.
