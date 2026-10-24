@@ -62,6 +62,7 @@ Use the user's exact form wording:
 
 ## Review and export behavior
 
+- Review issues appear beside the affected fields and within highlighted line items: amber for checks, red for blocking errors, with explanatory text and accessible field descriptions. Receipt-wide sum mismatches appear beside Total. Highlights refresh from server validation after autosave and follow item IDs while deletions save. The bottom acknowledgment/reason controls remain required by the existing verification rules; highlighting does not accept a warning. `frontend/tests/reviewIssues.mjs` checks this using mocked receipts, including desktop/mobile layouts, corrections, and deletion during autosave.
 - The receipt list shows **vendor only**, with **Unknown vendor** when missing. No image filename as a title/subtitle or upload-placeholder title. Status, assignment, duplicate warnings, and other operational indicators remain.
 - The receipt selector groups by local **day**, not individual upload timestamp.
 - Receipt details scroll independently of the image. The image pans by dragging, supports zoom/reset and crop selection, and hides scrollbars. Crop selection must remain aligned after preview rotation.

@@ -154,6 +154,19 @@ textarea { min-height: 70px; resize: vertical; }
 .item-fields label { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .item-description { grid-column: 1/-1; }
 .item-fields input { min-height: 32px; padding: 6px 8px; }
+.item-fields.has-review-warning { border-color: #bd9851; background: #fffcf5; }
+.item-fields.has-review-error { border-color: #c67b6e; background: #fff6f3; }
+.item-fields.has-review-warning legend { color: #765319; }
+.item-fields.has-review-error legend { color: #9a3d2e; }
+.item-review-label { font-weight: 600; }
+.inline-issues { grid-column: 1/-1; list-style: none; padding: 0; margin: 0 0 8px; overflow-wrap: anywhere; }
+.inline-issues li + li { margin-top: 5px; }
+.field .inline-issues { margin-bottom: 0; }
+.field-warning { font-size: 11px; color: #765319; }
+input.has-review-warning, select.has-review-warning { border-color: #bd9851; background: #fffcf5; }
+input.has-review-error, select.has-review-error { border-color: #c67b6e; background: #fff6f3; }
+input.has-review-warning:focus, input.has-review-error:focus,
+select.has-review-warning:focus, select.has-review-error:focus { border-color: var(--green); }
 .remove-item { position: absolute; top: -23px; right: 6px; width: 27px; min-height: 26px; color: var(--muted); background: var(--paper); }
 .total-field { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
 .total-field input { width: 100px; font-weight: 600; }
