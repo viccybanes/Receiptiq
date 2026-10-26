@@ -1,19 +1,17 @@
 """Evaluate installed local vision on labeled samples; block non-loopback sockets."""
 
 import argparse
-import io
 import ipaddress
 import json
 import socket
 import time
 from pathlib import Path
-from contextlib import contextmanager
 from decimal import Decimal, InvalidOperation
 
 from app.db import data_directory
 from app.ocr import PaddleEngine
 from app.system import ensure_runtime, stop_runtime
-from app.vision import ALLOWED_MODELS, DEFAULT_MODEL, MAX_RESPONSE_BYTES, VisionEngine, VisionError
+from app.vision import ALLOWED_MODELS, DEFAULT_MODEL, VisionEngine, VisionError
 from app.layout import layout_assistance_enabled
 
 
@@ -55,18 +53,18 @@ def main():
     ocr = PaddleEngine(root) if args.with_ocr else None
     if args.raw_responses:
         args.raw_responses.mkdir(parents=True, exist_ok=True)
-        original_open = engine.opener.open
+        original_request = engine._request
         capture_file = None
+        capture_count = 0
 
-        @contextmanager
-        def capture(request, *values, **options):
-            with original_open(request, *values, **options) as response:
-                raw = response.read(MAX_RESPONSE_BYTES + 1)
-                capture_file.write_bytes(raw)
-                with io.BytesIO(raw) as buffered:
-                    yield buffered
+        def capture(body, stop):
+            nonlocal capture_count
+            raw = original_request(body, stop)
+            capture_count += 1
+            capture_file.with_name(f"{capture_file.stem}-{capture_count}.json").write_bytes(raw)
+            return raw
 
-        engine.opener.open = capture
+        engine._request = capture
     original_connect = socket.socket.connect
     records = []
     started = time.monotonic()
@@ -89,6 +87,7 @@ def main():
                 ocr_seconds = time.monotonic() - sample_started
                 if args.raw_responses:
                     capture_file = args.raw_responses / (Path(sample["file"]).stem + ".json")
+                    capture_count = 0
                 result = engine.extract([path], lines, model=args.model)
                 data = result["draft"]
                 record.update(actual=data, seconds=result["seconds"], provenance=result["provenance"],

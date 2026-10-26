@@ -1,0 +1,213 @@
+"""Controlled evidence for detail-reading bounds, fallback, and human-value safety."""
+
+import copy
+import json
+import threading
+
+import pytest
+from PIL import Image
+
+from app.layout import detail_bands
+from app.vision import (
+    MAX_OCR_PROMPT_CHARS,
+    VisionEngine,
+    VisionError,
+    VisionReceipt,
+    _compact_ocr_context,
+    _normalize_candidate,
+    _ocr_context,
+    _runtime_error,
+)
+
+
+def dense_lines(count=10, score=.7):
+    lines = []
+    for i in range(count):
+        for left, right, text in [(50, 320, f"Part {i}"), (430, 490, "2 pcs"),
+                                  (560, 620, "5.00"), (700, 760, "10.00")]:
+            lines.append({"text": text, "score": score, "box": [left, 100 + i * 30, right, 120 + i * 30]})
+    return lines
+
+
+def response(names, amount="10"):
+    return VisionReceipt(supplier="Initial vendor", total="100", visible_item_count=len(names), items=[
+        {"description": name, "quantity": "2", "unit": "pcs", "unit_price": "5", "line_total": amount}
+        for name in names])
+
+
+@pytest.fixture
+def detail_engine(tmp_path, monkeypatch):
+    path = tmp_path / "synthetic.png"
+    Image.new("RGB", (800, 1000), "white").save(path)
+    engine = VisionEngine()
+    state = {"requests": [], "responses": []}
+
+    def read(payload, stop):
+        state["requests"].append(copy.deepcopy(payload))
+        result = state["responses"].pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result if isinstance(result, tuple) else (result, False)
+
+    monkeypatch.setattr(engine, "_read_receipt", read)
+    return engine, path, state
+
+
+@pytest.mark.parametrize("count", [8, 10, 15, 20])
+def test_bands_cover_whole_page_once_with_bounded_requests(count):
+    bands = detail_bands(dense_lines(count), [(800, 1000)])
+    assert 2 <= len(bands) <= 4
+    assert bands[0][1] == 0 and bands[-1][3] == 1
+    assert all(first[3] == second[1] for first, second in zip(bands, bands[1:]))
+    assert all(box[0] == 0 and box[2] == 1 for box in bands)
+
+
+@pytest.mark.parametrize("case", ["short", "too_long", "confident", "multi_page", "unknown_scores", "two_tables"])
+def test_detail_plan_skips_unsupported_layouts(case):
+    lines = dense_lines(7 if case == "short" else 21 if case == "too_long" else 10,
+                        .99 if case == "confident" else .7)
+    dimensions = [(800, 1000)] * (2 if case == "multi_page" else 1)
+    if case == "unknown_scores":
+        for line in lines:
+            line["score"] = float("nan")
+    if case == "two_tables":
+        extra = copy.deepcopy(lines)
+        for line in extra:
+            line["box"][1] += 500
+            line["box"][3] += 500
+        lines += extra
+    assert detail_bands(lines, dimensions) == []
+
+
+def test_compact_context_keeps_columns_unknown_confidence_and_budget():
+    lines = dense_lines(120)
+    lines[0].pop("score")
+    entries = _ocr_context(lines, None, [(800, 4000)])
+    compact, count = _compact_ocr_context(entries)
+    assert compact[0]["cells"] == [[231, "Part 0", None], [575, "2 pcs", 70],
+                                   [738, "5.00", 70], [912, "10.00", 70]]
+    assert 4 < count < len(lines)
+    assert count == sum(len(row["cells"]) for row in compact)
+    assert len(json.dumps(compact, ensure_ascii=False, separators=(",", ":"))) <= MAX_OCR_PROMPT_CHARS
+    assert len(json.dumps(compact)) < len(json.dumps(entries))
+
+
+def test_detail_recovers_rows_preserves_headers_and_does_not_force_money(detail_engine):
+    engine, path, state = detail_engine
+    first = response(["Old reading"])
+    a, b = response(["Repeated"] * 5, "9"), response(["New row"] * 5)
+    b.items[-1].quantity = "200"
+    a.supplier = b.supplier = "Do not replace header"
+    state["responses"] = [first, a, b]
+    result = engine.extract([path], dense_lines())
+    assert result["draft"]["supplier"] == "Initial vendor" and result["draft"]["total"] == "100"
+    assert len(result["draft"]["items"]) == 10
+    assert [item["description"] for item in result["draft"]["items"][:5]] == ["Repeated"] * 5
+    assert result["draft"]["items"][0]["line_total"] == "9"  # Apparent discount is not repaired.
+    assert result["draft"]["items"][-1]["quantity"] == "200"
+    assert result["provenance"]["detail_read"]["status"] == "read"
+    assert len(state["requests"]) == 3 and result["provenance"]["row_rechecks"] == 0
+    assert result["provenance"]["ocr_context_lines"] == 0
+    assert json.loads(state["requests"][0]["messages"][1]["content"])["ocr_lines"] == []
+    assert all("Part 0" not in json.dumps(payload) for payload in state["requests"])
+    assert "supplier" not in state["requests"][1]["format"]["properties"]
+    assert "section boundary" in result["notice"] and "discount" in result["notice"]
+
+
+@pytest.mark.parametrize("failure", ["unavailable", "partial", "mismatch", "empty"])
+def test_detail_failure_keeps_entire_initial_extraction(detail_engine, failure):
+    engine, path, state = detail_engine
+    final = response(["Last row"])
+    if failure == "unavailable":
+        final = VisionError("Unavailable")
+    elif failure == "partial":
+        final = final, True
+    elif failure == "mismatch":
+        final.visible_item_count = 3
+    else:
+        final = response([])
+    state["responses"] = [response(["Original"]), response(["Partial new"]), final]
+    result = engine.extract([path], dense_lines())
+    assert [item["description"] for item in result["draft"]["items"]] == ["Original"]
+    assert result["provenance"]["detail_read"]["status"] == "unresolved"
+    assert "kept the earlier full-page" in result["notice"]
+
+
+def test_detail_cancellation_propagates_without_publishing_partial_data(detail_engine, monkeypatch):
+    engine, path, state = detail_engine
+    stop = threading.Event()
+    original = engine._read_receipt
+
+    def read(payload, token):
+        if len(state["requests"]) == 1:
+            stop.set()
+            raise VisionError("cancelled")
+        return original(payload, token)
+
+    monkeypatch.setattr(engine, "_read_receipt", read)
+    state["responses"] = [response(["Original"])]
+    with pytest.raises(VisionError, match="cancelled"):
+        engine.extract([path], dense_lines(), stop=stop)
+
+
+@pytest.mark.parametrize("mode", ["disabled", "crop"])
+def test_manual_crop_and_rollback_do_not_start_detail_pass(detail_engine, monkeypatch, mode):
+    engine, path, state = detail_engine
+    if mode == "disabled":
+        monkeypatch.setenv("RECEIPTIQ_LAYOUT_ASSISTANCE", "0")
+    state["responses"] = [response(["Original"])]
+    result = engine.extract([path], dense_lines(), crop=[0, 0, 1, .8] if mode == "crop" else None)
+    assert result["provenance"]["detail_read"] is None and len(state["requests"]) == 1
+
+
+def test_detail_preserves_unread_values_identity_and_maps_crop_locations(detail_engine):
+    engine, path, state = detail_engine
+    first, a, b = response(["Original"]), response(["Cable"]), response(["Bolts"])
+    first.supplier = ""
+    a.items[0].quantity = a.items[0].unit = a.items[0].unit_price = a.items[0].line_total = ""
+    b.items[0].source_page, b.items[0].source_box = 0, [.1, .2, .9, .3]
+    state["responses"] = [first, a, b]
+    current = {"supplier": "Human vendor", "items": [{"id": "stable-id", "description": "Cable", "quantity": "7",
+                                                     "unit": "box", "unit_price": "13", "line_total": "91"}]}
+    before = copy.deepcopy(current)
+    result = engine.extract([path], dense_lines(), current=current, capture_regions=True)
+    item = result["draft"]["items"][0]
+    assert result["draft"]["supplier"] == "Human vendor"
+    assert (item["id"], item["quantity"], item["unit"], item["unit_price"], item["line_total"]) == (
+        "stable-id", "7", "box", "13", "91")
+    top = result["provenance"]["detail_read"]["sections"][1]["box"][1]
+    region = result["source_regions"][0]
+    assert region["box"][1] == pytest.approx(top + .2 * (1 - top))
+    assert current == before  # Adapter creates suggestions; applying uses the worker's revision guard.
+
+
+@pytest.mark.parametrize("amount", ["10", "9"])
+def test_shifted_price_uses_read_cell_without_calculating_or_removing_discount(amount):
+    candidate = response(["Cable"], amount)
+    item = candidate.items[0]
+    item.quantity, item.unit, item.unit_price = "2 pcs", "5", amount
+    notes = _normalize_candidate(candidate)
+    assert (item.quantity, item.unit, item.unit_price, item.line_total) == ("2", "pcs", "5", amount)
+    assert any("recovered shifted Unit price" in note for note in notes)
+
+
+@pytest.mark.parametrize("case", ["no_unit_pair", "conflicting_price", "disabled"])
+def test_ambiguous_column_shift_is_not_repaired(case, monkeypatch):
+    candidate = response(["Cable"])
+    item = candidate.items[0]
+    item.quantity, item.unit, item.unit_price = "2 pcs", "5", "10"
+    if case == "no_unit_pair":
+        item.quantity = "2"
+    elif case == "conflicting_price":
+        item.unit_price = "7"
+    else:
+        monkeypatch.setenv("RECEIPTIQ_LAYOUT_ASSISTANCE", "0")
+    before = item.unit_price
+    notes = _normalize_candidate(candidate)
+    assert item.unit_price == before
+    assert not any("recovered shifted Unit price" in note for note in notes)
+
+
+def test_context_overflow_has_an_actionable_error_without_private_text():
+    error = _runtime_error('request (10241 tokens) exceeds the available context size (8192 tokens) private text', 400)
+    assert "context limit" in str(error) and "private text" not in str(error)

@@ -110,7 +110,7 @@ def test_locations_are_optional_and_crop_coordinates_map_to_original(engine):
     assert 'source_box' in state['requests'][-1]['format']['$defs']['VisionItem']['properties']
 
 
-def test_numeric_unit_does_not_block_combined_quantity_and_amount_first_resolves_shift(engine):
+def test_numeric_unit_does_not_block_combined_quantity_and_amount_first_resolves_shift(engine, monkeypatch):
     engine, page, state = engine
     state['data'] = {'visible_item_count': 1, 'items': [
         {'description': 'Cable', 'quantity': '5 pcs', 'unit': '10.00', 'unit_price': '50.00', 'line_total': '50.00'},
@@ -119,8 +119,13 @@ def test_numeric_unit_does_not_block_combined_quantity_and_amount_first_resolves
     item = result['draft']['items'][0]
     assert (item['quantity'], item['unit'], item['unit_price'], item['line_total']) == ('5', 'pcs', '10.00', '50.00')
     assert result['field_meta']['items.0.unit_price']['source'] == 'derived'
-    normal = engine.extract([page], [])['draft']['items'][0]
-    assert normal['quantity'] == '5' and normal['unit'] == 'pcs' and normal['unit_price'] == '50.00'
+    normal = engine.extract([page], [])
+    item = normal['draft']['items'][0]
+    assert (item['quantity'], item['unit'], item['unit_price']) == ('5', 'pcs', '10.00')
+    assert normal['field_meta']['items.0.unit_price']['source'] == 'local_vision'
+    assert 'recovered shifted Unit price' in normal['notice']
+    monkeypatch.setenv('RECEIPTIQ_LAYOUT_ASSISTANCE', '0')
+    assert engine.extract([page], [])['draft']['items'][0]['unit_price'] == '50.00'
 
 
 def test_full_page_model_boxes_are_omitted_and_distinct_ocr_rows_supply_locations(engine):

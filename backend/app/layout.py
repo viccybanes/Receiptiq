@@ -88,3 +88,40 @@ def group_rows(lines):
                    box=[min(line["box"][0] for line in fragments), min(line["box"][1] for line in fragments),
                         max(line["box"][2] for line in fragments), max(line["box"][3] for line in fragments)])
     return rows
+
+
+def detail_bands(lines, dimensions):
+    """Bound a dense, uncertain single-page table to at most four reading sections.
+
+    OCR locates likely rows, but its words/numbers never become replacement values.
+    Sections cover the whole page, including items OCR missed above/below the table.
+    """
+    if len(dimensions) != 1:
+        return []
+    width, height = dimensions[0]
+    runs, run = [], []
+    for row in group_rows(lines):
+        fragments = row["lines"]
+        plausible = (row["page"] == 0 and len(fragments) >= 4 and
+                     row["box"][2] - row["box"][0] >= width * .55 and
+                     sum(bool(any(c.isdigit() for c in line["text"])) for line in fragments) >= 2)
+        if run and (not plausible or row["y"] - run[-1]["y"] > max(row["height"], run[-1]["height"]) * 2):
+            runs.append(run)
+            run = []
+        if plausible:
+            run.append(row)
+    if run:
+        runs.append(run)
+    dense = [rows for rows in runs if len(rows) >= 8]
+    if len(dense) != 1 or len(dense[0]) > 20:
+        return []
+    rows = dense[0]
+    scores = [line["score"] for row in rows for line in row["lines"]
+              if type(line.get("score")) in (int, float) and math.isfinite(line["score"]) and
+              0 <= line["score"] <= 1]
+    if not scores or median(scores) >= .85:
+        return []
+    cuts = [0.0] + [(rows[i - 1]["y"] + rows[i]["y"]) / 2 / height for i in range(5, len(rows), 5)] + [1.0]
+    if any(not 0 <= top < bottom <= 1 or bottom - top < .04 for top, bottom in zip(cuts, cuts[1:])):
+        return []
+    return [[0.0, top, 1.0, bottom] for top, bottom in zip(cuts, cuts[1:])]
