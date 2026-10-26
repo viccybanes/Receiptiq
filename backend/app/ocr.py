@@ -86,7 +86,7 @@ class PaddleEngine:
             for text, score, polygon in zip(result["rec_texts"], result["rec_scores"], result["rec_polys"]):
                 points = polygon.tolist() if hasattr(polygon, "tolist") else polygon
                 xs, ys = zip(*points)
-                lines.append({"text": text, "score": float(score),
+                lines.append({"text": text, "score": float(score), "polygon": points,
                               "box": [float(min(xs)), float(min(ys)), float(max(xs)), float(max(ys))]})
         return lines
 

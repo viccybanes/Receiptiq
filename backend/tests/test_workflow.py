@@ -316,11 +316,15 @@ def test_upload_preview_then_explicit_ocr(client):
     assert receipt['evidence']['lines']
 
 @pytest.mark.parametrize('intervention', ['none', 'before', 'during', 'failure'])
-def test_upload_auto_vision_is_serial_and_preserves_edits(client, monkeypatch, intervention):
+@pytest.mark.parametrize('layout', [False, True])
+def test_upload_auto_vision_is_serial_and_preserves_edits(client, monkeypatch, intervention, layout):
     import copy
     import json
 
     calls = []
+    ocr_calls = []
+    monkeypatch.setenv('RECEIPTIQ_LAYOUT_ASSISTANCE', '1' if layout else '0')
+    ocr_lines = [{'text': 'Cable 10.00', 'box': [10, 20, 200, 40], 'score': .98}]
     first_id = None
 
     def edit(receipt_id):
@@ -333,7 +337,8 @@ def test_upload_auto_vision_is_serial_and_preserves_edits(client, monkeypatch, i
 
     def extract(images, lines, **options):
         assert len(client.store.read("SELECT id FROM jobs WHERE state='processing'")) == 1
-        assert images[0].is_file() and lines == []
+        assert images[0].is_file()
+        assert lines == ([{**line, 'page': 0} for line in ocr_lines] if layout else [])
         calls.append(options['model'])
         if len(calls) == 1:
             if intervention == 'during':
@@ -346,14 +351,20 @@ def test_upload_auto_vision_is_serial_and_preserves_edits(client, monkeypatch, i
 
     monkeypatch.setattr(client.worker.vision, 'extract', extract)
     monkeypatch.setattr(client.worker.retrieval, 'search', lambda *args, **kwargs: [])
-    monkeypatch.setattr(client.worker.engine, 'recognize', lambda *args: pytest.fail('Automatic OCR must remain disabled'))
+    def recognize(path):
+        assert layout
+        assert len(client.store.read("SELECT id FROM jobs WHERE state='processing'")) == 1
+        ocr_calls.append(path)
+        return ocr_lines
+
+    monkeypatch.setattr(client.worker.engine, 'recognize', recognize)
     (client.store.root / 'setup-profile.json').write_text(json.dumps({'model': 'qwen3-vl:4b-instruct'}))
     group = batch(client, 2)
     first_id = upload(client, group, 0, auto_ocr=False).json()['id']
     second_id = upload(client, group, 1, auto_ocr=False).json()['id']
     assert client.worker.process_one()  # Preview first receipt and persist its vision job.
     assert client.store.receipt(first_id)['vision_job']['state'] == 'queued'
-    assert not calls
+    assert not calls and not ocr_calls  # Preview still does not run OCR.
     if intervention == 'before':
         edit(first_id)
     assert client.worker.process_one()  # Only first vision job runs.
@@ -372,6 +383,7 @@ def test_upload_auto_vision_is_serial_and_preserves_edits(client, monkeypatch, i
     assert client.worker.process_one()  # Second vision, even after first failed.
     assert client.store.receipt(second_id)['data']['supplier'] == 'VISION VENDOR'
     assert calls == ['qwen3-vl:4b-instruct', 'qwen3-vl:4b-instruct']
+    assert len(ocr_calls) == (2 if layout else 0)
     if intervention == 'failure':
         assert client.worker.process_one()
         assert client.store.receipt(first_id)['data']['supplier'] == 'VISION VENDOR'

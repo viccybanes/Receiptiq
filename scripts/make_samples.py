@@ -38,7 +38,10 @@ def create_samples(destination, count=60):
         manifest.append({"file": path.name, "category": category,
                          "expected": {"supplier": "NORTHSIDE MARKET", "receipt_date": "2026-10-19",
                                       "receipt_number": number, "currency": "PHP", "total": "125.00"},
-                         "expected_item_count": 2})
+                         "expected_item_count": 2,
+                         "expected_items": [
+                             {"description": "Coffee", "quantity": "2", "unit_price": "50.00", "line_total": "100.00"},
+                             {"description": "Bread", "quantity": "1", "unit_price": "25.00", "line_total": "25.00"}]})
     (destination / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return manifest
 

@@ -8,10 +8,11 @@ import time
 from .db import Store, now, uid
 from .extraction import parse
 from .imaging import pages, preprocess
+from .layout import layout_assistance_enabled
 from .models import ReceiptData
 from .ocr import PaddleEngine
 from .retrieval import Retrieval
-from .vision import ALLOWED_MODELS, DEFAULT_MODEL, VisionEngine
+from .vision import ALLOWED_MODELS, DEFAULT_MODEL, MAX_VISION_PAGES, VisionEngine
 from .vision_settings import load_vision_settings
 
 logger = logging.getLogger(__name__)
@@ -104,20 +105,34 @@ class Worker:
         selected_pages = self.store.read("SELECT * FROM document_pages WHERE receipt_id=? ORDER BY page_number",
                                          (receipt["id"],)) if payload.get("auto_apply") else [page]
         image_paths = [self.store.file(row["processed_path"]) for row in selected_pages]
+        if len(image_paths) > MAX_VISION_PAGES:
+            raise ValueError(f"Choose between 1 and {MAX_VISION_PAGES} receipt pages for local vision.")
         page_numbers = {row["page_number"]: index for index, row in enumerate(selected_pages)}
         lines = [{**line, "page": page_numbers[line["page"]]} for line in receipt["evidence"]["lines"]
                  if line["page"] in page_numbers]
         options = load_vision_settings(self.store.root).model_dump()
         location_notice = ""
-        if options["capture_regions"] and not lines:
-            self.store.execute("UPDATE jobs SET stage='Locating item rows' WHERE id=?", (job["id"],))
-            try:
-                for index, path in enumerate(image_paths):
-                    lines.extend({**line, "page": index} for line in self.engine.recognize(path))
-                    if self.cancelled(job):
-                        return
-            except Exception:
-                location_notice = " Local row-location reading was unavailable; only usable Vision locations are shown."
+        ocr_started = time.monotonic()
+        ocr_status = "existing" if lines else "not_requested"
+        if layout_assistance_enabled() or options["capture_regions"]:
+            missing_pages = [index for index in range(len(image_paths))
+                             if not any(line["page"] == index for line in lines)]
+            if missing_pages:
+                self.store.execute("UPDATE jobs SET stage='Reading OCR layout' WHERE id=?", (job["id"],))
+            for index in missing_pages:
+                if self.cancelled(job):
+                    return
+                try:
+                    lines.extend({**line, "page": index} for line in self.engine.recognize(image_paths[index]))
+                    if ocr_status != "unavailable":
+                        ocr_status = "read"
+                except Exception:
+                    ocr_status = "unavailable"
+                    location_notice = " OCR layout assistance was unavailable for some pages; check the image carefully."
+                if self.cancelled(job):
+                    return
+        ocr_seconds = round(time.monotonic() - ocr_started, 3)
+        self.store.execute("UPDATE jobs SET stage='Reading with local vision' WHERE id=?", (job["id"],))
         result = self.vision.extract(image_paths, lines, examples=examples,
                                      **options,
                                      crop=payload.get("crop"), model=payload["model"],
@@ -125,6 +140,7 @@ class Worker:
                                      preserve_items=len(receipt["pages"]) > 1 and not payload.get("auto_apply"))
         if self.cancelled(job):
             return
+        result["ocr_assistance"] = {"status": ocr_status, "seconds": ocr_seconds, "line_count": len(lines)}
         if location_notice:
             result["notice"] = result.get("notice", "") + location_notice
         for region in result.get("source_regions", []):

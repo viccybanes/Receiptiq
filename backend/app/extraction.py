@@ -4,6 +4,7 @@ import re
 from datetime import date
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal, InvalidOperation
 
+from .layout import group_rows
 from .models import blank_data
 
 AMOUNT = r"-?\d[\d,]*\.\d{2}"
@@ -75,14 +76,7 @@ def parse(lines):
     meta = {}
     receipt_codes = []
     receipt_code_lines = []
-    rows = []
-    # Join OCR boxes on the same visual row before interpreting line items.
-    for line in sorted(lines, key=lambda line: (line["page"], line["box"][1], line["box"][0])):
-        if rows and rows[-1]["page"] == line["page"] and abs(rows[-1]["y"] - line["box"][1]) < 12:
-            rows[-1]["text"] += " " + line["text"]
-            rows[-1]["ids"].append(line["id"])
-        else:
-            rows.append({"page": line["page"], "y": line["box"][1], "text": line["text"], "ids": [line["id"]]})
+    rows = group_rows(lines)
 
     def assign(key, value, row):
         data[key] = value

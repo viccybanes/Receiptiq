@@ -1,5 +1,7 @@
 # ReceiptIQ agent handoff
 
+Experimental branch update (2026-10-26): `experiment/ocr-layout-evidence` adds reversible OCR geometry assistance and one bounded missing-Amount crop reread. See [LAYOUT_EXPERIMENT.md](LAYOUT_EXPERIMENT.md) for exact scope, rollback, measured accuracy/latency, and validation. On this branch, missing OCR runs before vision independently of row outlines unless `RECEIPTIQ_LAYOUT_ASSISTANCE=0`; this supersedes the older outline-only behavior described below. Main and its uncommitted edits remain in the original worktree.
+
 Updated 2026-10-23. Implementation snapshot: `main` at `d457240` before this documentation commit. Recheck Git and running processes before acting; this is not a live service-status report.
 
 ## Start here

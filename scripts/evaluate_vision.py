@@ -8,11 +8,31 @@ import socket
 import time
 from pathlib import Path
 from contextlib import contextmanager
+from decimal import Decimal, InvalidOperation
 
 from app.db import data_directory
 from app.ocr import PaddleEngine
 from app.system import ensure_runtime, stop_runtime
 from app.vision import ALLOWED_MODELS, DEFAULT_MODEL, MAX_RESPONSE_BYTES, VisionEngine, VisionError
+from app.layout import layout_assistance_enabled
+
+
+def item_matches(actual, expected):
+    """Compare labels in source order; equal totals never hide wrong-row prices."""
+    rows = []
+    for index, label in enumerate(expected):
+        item = actual[index] if index < len(actual) else {}
+        fields = {}
+        for key, value in label.items():
+            if key in ("quantity", "unit_price", "line_total"):
+                try:
+                    fields[key] = Decimal(item.get(key, "")) == Decimal(value)
+                except InvalidOperation:
+                    fields[key] = False
+            else:
+                fields[key] = item.get(key) == value
+        rows.append(fields)
+    return rows
 
 
 def main():
@@ -64,13 +84,17 @@ def main():
             record = {"file": sample["file"], "category": sample["category"]}
             try:
                 path = args.samples / sample["file"]
+                sample_started = time.monotonic()
                 lines = ocr.recognize(path) if ocr else []
+                ocr_seconds = time.monotonic() - sample_started
                 if args.raw_responses:
                     capture_file = args.raw_responses / (Path(sample["file"]).stem + ".json")
                 result = engine.extract([path], lines, model=args.model)
                 data = result["draft"]
                 record.update(actual=data, seconds=result["seconds"], provenance=result["provenance"],
-                              ocr_line_count=len(lines),
+                              ocr_line_count=len(lines), ocr_seconds=round(ocr_seconds, 3),
+                              total_seconds=round(time.monotonic() - sample_started, 3),
+                              item_field_matches=item_matches(data["items"], sample.get("expected_items", [])),
                               field_matches={key: data.get(key) == value for key, value in sample["expected"].items()},
                               item_count_matches=len(data["items"]) == sample["expected_item_count"])
                 print(f"{index + 1}/{len(manifest)} {sample['category']}: "
@@ -86,7 +110,7 @@ def main():
             stop_runtime(root)
     report = {"kind": "Synthetic typography benchmark; does not measure real handwriting accuracy",
               "model": args.model, "outbound_network": "non-loopback sockets blocked during inference",
-              "ocr_context": args.with_ocr, "count": len(records),
+              "ocr_context": args.with_ocr, "layout_assistance": layout_assistance_enabled(), "count": len(records),
               "seconds": round(time.monotonic() - started, 3), "records": records}
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, indent=2), encoding="utf-8")

@@ -21,6 +21,7 @@ from pydantic_core import from_json
 from .extraction import decimal, extraction_date, validate
 from .imaging import MAX_PAGES, inspect_file
 from .imaging import pages as image_pages
+from .layout import group_rows, layout_assistance_enabled, valid_box
 from .models import Item, ReceiptData, StrictModel
 
 DEFAULT_MODEL = "qwen3-vl:2b-instruct"
@@ -29,6 +30,7 @@ MAX_VISION_PAGES = min(6, MAX_PAGES)
 MAX_REQUEST_BYTES = 16 * 1024 * 1024
 MAX_RESPONSE_BYTES = 1024 * 1024
 MAX_OCR_CHARS = 30_000
+MAX_OCR_CONTEXT_CHARS = 16_000
 ITEM_TYPES = ("Materials", "Tools", "Equipment", "Outside Labor", "Services", "Permits & Fees",
               "Utilities", "Transportation", "Logistics", "Other")
 
@@ -293,7 +295,7 @@ def _images(paths, crop):
     return encoded, dimensions
 
 
-def _ocr_context(lines, crop, dimensions):
+def _legacy_ocr_context(lines, crop, dimensions):
     context = []
     remaining = MAX_OCR_CHARS
     for line in lines:
@@ -316,6 +318,60 @@ def _ocr_context(lines, crop, dimensions):
             remaining -= len(text)
         if remaining <= 0:
             break
+    return context
+
+
+def _selected_ocr_lines(lines, crop, dimensions):
+    selected = []
+    for line in lines:
+        if not isinstance(line, dict) or not isinstance(line.get("text"), str):
+            continue
+        page = line.get("page", 0)
+        if type(page) is not int or not 0 <= page < len(dimensions) or not valid_box(line.get("box")):
+            continue
+        width, height = dimensions[page]
+        box = line["box"]
+        if not (0 <= box[0] < box[2] <= width and 0 <= box[1] < box[3] <= height):
+            continue
+        if crop and not (crop[0] <= box[0] / width < box[2] / width <= crop[2] and
+                         crop[1] <= box[1] / height < box[3] / height <= crop[3]):
+            continue
+        selected.append(line)
+    return selected
+
+
+def _ocr_context(lines, crop, dimensions):
+    if not layout_assistance_enabled():
+        return _legacy_ocr_context(lines, crop, dimensions)
+    context = []
+    remaining = MAX_OCR_CONTEXT_CHARS - 2
+    for row in group_rows(_selected_ocr_lines(lines, crop, dimensions)):
+        width, height = dimensions[row["page"]]
+        for line in row["lines"]:
+            box = [v / (width if i % 2 == 0 else height) for i, v in enumerate(line["box"])]
+            if crop:
+                box = [(v - crop[i % 2]) / (crop[i % 2 + 2] - crop[i % 2]) for i, v in enumerate(box)]
+            entry = {"text": line["text"][:2000], "page": row["page"], "row_id": row["row_id"],
+                     "box": [round(v, 4) for v in box]}
+            score = line.get("score")
+            if type(score) in (float, int) and math.isfinite(score) and 0 <= score <= 1:
+                entry["confidence"] = round(score, 3)
+            size = len(json.dumps(entry, ensure_ascii=False)) + 2
+            if size > remaining:
+                return context
+            context.append(entry)
+            remaining -= size
+    if crop is None:
+        for line in lines:
+            if (not isinstance(line, dict) or not isinstance(line.get("text"), str) or "box" in line or
+                    type(line.get("page", 0)) is not int or not 0 <= line.get("page", 0) < len(dimensions)):
+                continue
+            entry = {"text": line["text"][:2000], "page": line.get("page", 0)}
+            size = len(json.dumps(entry, ensure_ascii=False)) + 2
+            if size > remaining:
+                break
+            context.append(entry)
+            remaining -= size
     return context
 
 
@@ -495,32 +551,16 @@ def _derive_from_amount(draft):
 def _locate_rows(candidate, lines, dimensions, crop):
     """Prefer distinct OCR-matched rows; reject model placeholders covering the whole image."""
     rows = []
-    valid_lines = [line for line in lines if isinstance(line, dict) and
-                   isinstance(line.get("page", 0), int) and isinstance(line.get("box"), (list, tuple)) and
-                   len(line["box"]) == 4 and all(isinstance(v, (int, float)) and math.isfinite(v) for v in line["box"])]
-    for line in sorted(valid_lines, key=lambda entry: (entry.get("page", 0), entry["box"][1], entry["box"][0])):
-        page, box = line.get("page", 0), line.get("box")
-        if not isinstance(page, int) or not 0 <= page < len(dimensions) or not isinstance(box, (list, tuple)) or len(box) != 4:
-            continue
-        if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in box):
-            continue
+    for row in group_rows(_selected_ocr_lines(lines, crop, dimensions)):
+        page, box = row["page"], row["box"]
         width, height = dimensions[page]
         normalized = [box[0] / width, box[1] / height, box[2] / width, box[3] / height]
-        if crop and not (crop[0] <= (normalized[0] + normalized[2]) / 2 <= crop[2] and
-                         crop[1] <= (normalized[1] + normalized[3]) / 2 <= crop[3]):
-            continue
-        if rows and rows[-1]["page"] == page and abs(rows[-1]["box"][1] - normalized[1]) * height < 12:
-            row = rows[-1]
-            row["text"] += " " + str(line.get("text", ""))
-            row["box"] = [min(row["box"][0], normalized[0]), min(row["box"][1], normalized[1]),
-                          max(row["box"][2], normalized[2]), max(row["box"][3], normalized[3])]
-        else:
-            rows.append({"page": page, "text": str(line.get("text", "")), "box": normalized})
+        rows.append({"page": page, "text": row["text"], "box": normalized})
     used = set()
     for item in candidate.items:
         words = re.sub(r"\W+", " ", item.description.casefold()).strip()
         matched = next((index for index, row in enumerate(rows) if index not in used and words and
-                        words in re.sub(r"\W+", " ", row["text"].casefold()) and
+                        " " + words + " " in " " + re.sub(r"\W+", " ", row["text"].casefold()).strip() + " " and
                         re.search(r"\d", row["text"])), None)
         if matched is not None:
             used.add(matched)
@@ -546,6 +586,44 @@ def _row_audit(candidate, crop):
             "mismatch": (candidate.visible_item_count is not None and
                          candidate.visible_item_count != len(candidate.items)) or
                         retained_count != len(candidate.items)}
+
+
+def _focus_target(candidate, lines, dimensions, crop, current):
+    """Pick one unambiguous OCR row with a missing Amount, never an arithmetic discrepancy."""
+    rows = group_rows(_selected_ocr_lines(lines, crop, dimensions))
+    names = [" ".join(item.description.casefold().split()) for item in candidate.items]
+    for index, item in enumerate(candidate.items):
+        name = names[index]
+        if item.line_total or not name or names.count(name) != 1:
+            continue
+        if any(" ".join(old["description"].casefold().split()) == name and old.get("line_total")
+               for old in (current or {}).get("items", [])):
+            continue  # Do not replace a value already entered by a human.
+        matches = [row for row in rows if " " + name + " " in " " + row["text"].casefold() + " " and
+                   re.search(r"\d+[.,]\d{2}\b", row["text"])]
+        if len(matches) != 1:
+            continue
+        row = matches[0]
+        if any(type(line.get("score")) not in (float, int) or not 0.8 <= line["score"] <= 1
+               for line in row["lines"]):
+            continue
+        width, height = dimensions[row["page"]]
+        left, top, right, bottom = row["box"]
+        if bottom - top > height * 0.15:
+            continue
+        neighbors = [other for other in rows if other is not row and other["page"] == row["page"]]
+        if any(other["box"][1] < bottom and other["box"][3] > top for other in neighbors):
+            continue
+        padding = (bottom - top) * 0.5
+        above = max([other["box"][3] for other in neighbors if other["box"][3] <= top] or [0])
+        below = min([other["box"][1] for other in neighbors if other["box"][1] >= bottom] or [height])
+        bounds = crop or [0, 0, 1, 1]
+        region = [max(bounds[0], (left - width * 0.02) / width),
+                  max(bounds[1], max(top - padding, (above + top) / 2) / height),
+                  min(bounds[2], (right + width * 0.02) / width),
+                  min(bounds[3], min(bottom + padding, (below + bottom) / 2) / height)]
+        return index, row, region
+    return None
 
 
 def _merge(candidate, current, crop, preserve_items=False, sources=None):
@@ -726,6 +804,18 @@ class VisionEngine:
         context = {"task": "Extract visible receipt values for a human to review.",
                    "ocr_lines": _ocr_context(ocr_lines, crop, dimensions),
                    "historical_examples": _example_context(examples)}
+        layout_enabled = layout_assistance_enabled()
+        context_truncated = layout_enabled and (
+            len(context["ocr_lines"]) < len(_selected_ocr_lines(ocr_lines, crop, dimensions)) or
+            any(len(line["text"]) > 2000 for line in _selected_ocr_lines(ocr_lines, crop, dimensions)))
+        if layout_enabled:
+            context["ocr_layout"] = (
+                "OCR is fallible, especially on handwriting. page is the zero-based supplied image index; "
+                "box is [left,top,right,bottom] in 0..1 coordinates of that image (or crop). "
+                "Fragments sharing row_id are candidate row neighbors, not verified matches. "
+                "Use horizontal column positions to distinguish Quantity, Unit price and Amount; "
+                "check every value against the image. Confidence belongs to OCR, not the receipt field. "
+                "OCR may omit lines; never use its row count as the item count.")
         if amount_first:
             context["amount_first"] = ("Read each row's Amount first, then its Quantity and Unit price. "
                                        "Leave an uncertain factor blank; the app can derive it exactly from Amount "
@@ -778,6 +868,57 @@ class VisionEngine:
                                "Return the full JSON object, not a patch.",
             }
             payload["messages"][1]["content"] = json.dumps(context, ensure_ascii=False)
+        focused = None
+        # Share the existing two-call budget: completeness recheck OR one missing-Amount crop.
+        if layout_enabled and not attempt and not partial_response and not row_audit["mismatch"]:
+            target = _focus_target(candidate, ocr_lines, dimensions, crop, current)
+            if target:
+                index, row, region = target
+                item = candidate.items[index]
+                focused = {"item_index": index, "page_index": row["page"], "box": region,
+                           "status": "unresolved", "filled_fields": []}
+                _cancelled(stop)
+                try:
+                    focused_images, focused_dimensions = _images([pages[row["page"]]], region)
+                    focused_lines = [{**line, "page": 0} for line in row["lines"]]
+                    focused_context = {
+                        "task": "Read this single item row independently. Return one item, no header fields. "
+                                "Read only visibly written values. Do not calculate missing values. "
+                                "Leave ambiguous values blank. Do not repair an apparent discount.",
+                        "ocr_lines": _ocr_context(focused_lines, region, focused_dimensions),
+                    }
+                    focused_payload = {**payload, "format": _output_schema(False), "messages": [
+                        payload["messages"][0], {"role": "user", "content": json.dumps(focused_context),
+                                                 "images": focused_images}]}
+                    reread, recovered = self._read_receipt(focused_payload, stop)
+                    reread_notes = _normalize_candidate(reread)
+                    if not recovered and len(reread.items) == 1:
+                        other = reread.items[0]
+                        same_name = " ".join(other.description.casefold().split()) == " ".join(item.description.casefold().split())
+                        conflicts = any(getattr(item, key) and getattr(other, key) and
+                                        decimal(getattr(item, key)) != decimal(getattr(other, key))
+                                        for key in ("quantity", "unit_price"))
+                        if item.unit and other.unit and item.unit.casefold() != other.unit.casefold():
+                            conflicts = True
+                        # For this conservative fallback, require the rightmost printed money token.
+                        # A product code, Quantity or earlier Unit price cannot corroborate Amount.
+                        money = re.findall(r"-?\d[\d,.]*[.,]\d{2}\b", row["text"])
+                        amount = _numeric_value("line_total", money[-1]) if money else ""
+                        if (same_name and not conflicts and other.line_total and amount and
+                                decimal(other.line_total) == decimal(amount)):
+                            item.line_total = other.line_total
+                            focused.update(status="filled", filled_fields=["line_total"])
+                            recovery_notices.extend(f"Focused row {index + 1}: {note}" for note in reread_notes)
+                        elif conflicts:
+                            focused["status"] = "conflict"
+                except VisionError:
+                    _cancelled(stop)  # Cancellation must stop the job, not publish partial work.
+                    focused["status"] = "unavailable"
+                recovery_notices.append(
+                    f"Line {index + 1}: focused image reread " +
+                    ("filled a missing Amount supported by OCR; verify it against the original."
+                     if focused["status"] == "filled" else
+                     "did not resolve the missing Amount; earlier values were retained for review."))
         sources = []
         draft, fields = _merge(candidate, current, crop, preserve_items, sources)
         derived = _derive_from_amount(draft) if amount_first else []
@@ -798,6 +939,8 @@ class VisionEngine:
             notices.append("Recovered partial vision data from malformed or incomplete output. "
                            "Some fields or rows may be missing; check every recovered value against the image.")
         notices.extend(recovery_notices)
+        if context_truncated:
+            notices.append("OCR layout context was shortened to fit the model budget; check all rows in the image.")
         if removed_duplicates:
             notices.append("Removed a repeated final item supported by the row count or identical source region. Check the image.")
         if capture_regions and len(regions) < row_audit["retained_item_count"]:
@@ -826,7 +969,9 @@ class VisionEngine:
                        if issue["field"] == "item_sum" or issue["field"].endswith(".arithmetic"))
         provenance = {"source": "local_vision", "model": model, "page_count": len(pages), "crop": crop,
                       "historical_examples": len(context["historical_examples"]), "row_rechecks": attempt,
-                      "partial_response": partial_response}
+                      "partial_response": partial_response, "layout_assistance": layout_enabled,
+                      "ocr_context_lines": len(context["ocr_lines"]), "ocr_context_truncated": context_truncated,
+                      "focused_recheck": focused}
         metadata = {field: {**provenance, "line_ids": []} for field in fields}
         metadata.update({field: {"source": "derived", "line_ids": [], "based_on": ["line_total", known]}
                          for field, known in derived})

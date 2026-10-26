@@ -130,7 +130,8 @@ def test_region_is_cropped_and_ocr_outside_it_is_excluded(page, runtime):
         {"text": "outside", "box": [0, 0, 50, 50]},
         {"text": "no box"}], crop=[0.25, 0.25, 0.75, 0.75])
     context = json.loads(runtime["request"]["messages"][1]["content"])
-    assert context["ocr_lines"] == [{"text": "inside"}]
+    assert context["ocr_lines"] == [{"text": "inside", "page": 0, "row_id": 0,
+                                      "box": [0.25, 0.1, 0.375, 0.2]}]
     with Image.open(io.BytesIO(base64.b64decode(runtime["request"]["messages"][1]["images"][0]))) as image:
         assert image.size == (400, 500)
     assert result["provenance"]["crop"] == [0.25, 0.25, 0.75, 0.75]
