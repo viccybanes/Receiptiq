@@ -123,7 +123,10 @@ def detail_bands(lines, dimensions):
               0 <= line["score"] <= 1]
     if not scores or median(scores) >= .85:
         return []
-    cuts = [0.0] + [(rows[i - 1]["y"] + rows[i]["y"]) / 2 / height for i in range(5, len(rows), 5)] + [1.0]
+    # y is a tilt-corrected baseline used for grouping, not a page coordinate.
+    # Crop between the actual row extents; projected baselines can cut a row in half.
+    cuts = [0.0] + [(rows[i - 1]["box"][3] + rows[i]["box"][1]) / 2 / height
+                    for i in range(5, len(rows), 5)] + [1.0]
     if any(not 0 <= top < bottom <= 1 or bottom - top < .04 for top, bottom in zip(cuts, cuts[1:])):
         return []
     return [[0.0, top, 1.0, bottom] for top, bottom in zip(cuts, cuts[1:])]

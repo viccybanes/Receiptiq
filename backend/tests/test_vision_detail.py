@@ -97,6 +97,38 @@ def test_stray_fragments_do_not_bridge_a_real_table_gap():
     assert detail_bands(lines, [(800, 1000)]) == []
 
 
+def test_section_cuts_use_page_coordinates_after_tilt_grouping():
+    lines = dense_lines()
+    for line in lines:
+        left, top, right, bottom = line["box"]
+        # Deliberately tilted columns: projected baselines are not image pixels.
+        line["polygon"] = [[left, top + .06 * left], [right, top + .06 * right],
+                           [right, bottom + .06 * right], [left, bottom + .06 * left]]
+        line["box"] = [left, top + .06 * left, right, bottom + .06 * right]
+    bands = detail_bands(lines, [(800, 1000)])
+    previous_bottom = max(line["box"][3] for line in lines[16:20])
+    next_top = min(line["box"][1] for line in lines[20:24])
+    assert bands[0][3] * 1000 == pytest.approx((previous_bottom + next_top) / 2)
+
+
+def test_equal_counts_cannot_hide_a_lost_full_page_item(detail_engine):
+    engine, path, state = detail_engine
+    state["responses"] = [response(["Cable", "Tie wire"]), response(["Cable"]), response(["Cancelled entry"])]
+    result = engine.extract([path], dense_lines())
+    detail = result["provenance"]["detail_read"]
+    assert [item["description"] for item in detail["unmatched_full_page_items"]] == ["Tie wire"]
+    assert "Tie wire" in result["notice"] and "may be missing" in result["notice"]
+    assert [item["description"] for item in result["draft"]["items"]] == ["Cable", "Cancelled entry"]
+    assert len(state["requests"]) == 3  # No guessed row or extra inference to force agreement.
+
+
+def test_inventory_comparison_preserves_repeated_purchases_and_ignores_punctuation(detail_engine):
+    engine, path, state = detail_engine
+    state["responses"] = [response(["Tie-wire", "Bolts", "Bolts"]), response(["tie wire"]), response(["Bolts"])]
+    result = engine.extract([path], dense_lines())
+    assert [item["description"] for item in result["provenance"]["detail_read"]["unmatched_full_page_items"]] == ["Bolts"]
+
+
 def test_compact_context_keeps_columns_unknown_confidence_and_budget():
     lines = dense_lines(120)
     lines[0].pop("score")

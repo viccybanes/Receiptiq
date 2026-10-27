@@ -11,6 +11,7 @@ import re
 import select
 import socket
 import time
+from collections import Counter
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -963,6 +964,23 @@ class VisionEngine:
                     section["status"] = "unavailable"
                     break
             else:
+                # Compare identities as well as counts: an extra/cancelled row can
+                # conceal a lost purchase. Wording differences are only review clues.
+                remaining = Counter(re.sub(r"\W+", "", item.description.casefold()) for item in detail_items)
+                unmatched = []
+                for item_index, item in enumerate(candidate.items):
+                    name = re.sub(r"\W+", "", item.description.casefold())
+                    if remaining[name]:
+                        remaining[name] -= 1
+                    else:
+                        unmatched.append({"item_index": item_index, "description": item.description[:120]})
+                detail["unmatched_full_page_items"] = unmatched
+                if unmatched:
+                    labels = "; ".join(item["description"][:80] or "(unnamed row)" for item in unmatched[:10])
+                    recovery_notices.append(
+                        f"Full-page/detail readings disagree: {len(unmatched)} earlier row(s) may be missing or "
+                        f"worded differently: {labels}. Compare the original image; earlier readings can also be wrong. "
+                        "No earlier row or number was automatically added.")
                 candidate.items = detail_items
                 candidate.reading_notes = []
                 recovery_notices.extend(note.strip()[:300] for note in detail_notes if note.strip())
