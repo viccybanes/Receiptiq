@@ -79,6 +79,24 @@ def test_detail_plan_skips_unsupported_layouts(case):
     assert detail_bands(lines, dimensions) == []
 
 
+def test_detached_amount_does_not_hide_dense_table():
+    lines = dense_lines()
+    lines.append({"text": "10.00", "score": .6, "box": [700, 240, 760, 260]})
+    bands = detail_bands(lines, [(800, 1000)])
+    assert len(bands) == 2
+    assert bands[0][1] == 0 and bands[0][3] == bands[1][1] and bands[1][3] == 1
+
+
+def test_stray_fragments_do_not_bridge_a_real_table_gap():
+    lines = dense_lines()
+    for line in lines[20:]:
+        line["box"][1] += 150
+        line["box"][3] += 150
+    lines.extend({"text": "10.00", "score": .6, "box": [700, y, 760, y + 20]}
+                 for y in range(250, 400, 25))
+    assert detail_bands(lines, [(800, 1000)]) == []
+
+
 def test_compact_context_keeps_columns_unknown_confidence_and_budget():
     lines = dense_lines(120)
     lines[0].pop("score")

@@ -180,10 +180,16 @@ def validate(data):
                 issue(key, str(exc), True)
     items = data.get("items", [])
     item_totals = []
+    row_numbers = []
     for i, item in enumerate(items):
         prefix = f"items.{i}"
         if not item["description"]:
             issue(prefix + ".description", f"Item {i + 1} needs a description.", True)
+        elif re.fullmatch(r"(?:vat(?:able|exempt)?sales|vat|zeroratedsales|totalsales|"
+                          r"totalamountdue|amountnetofvat|receivedtheamountof)",
+                          re.sub(r"[^a-z]", "", item["description"].casefold())):
+            issue(prefix + ".description", f"Line {i + 1} looks like a receipt summary or payment label. "
+                  "Check whether it is a purchased item before keeping it.")
         if item.get("unit") and not re.search(r"[A-Za-z]", item["unit"]):
             issue(prefix + ".unit", "Unit must name a unit such as pcs, mtrs, boxes, gals, or kgs; it cannot be a number.", True)
         values = {}
@@ -197,6 +203,7 @@ def validate(data):
                         issue(prefix + ".quantity", "Quantity is unusually large. Check the original for extra zeros or a misread decimal; keep it if correct.")
                 except ValueError as exc:
                     issue(prefix + "." + key, str(exc), True)
+        row_numbers.append(values)
         if "line_total" in values:
             item_totals.append(values["line_total"])
         else:
@@ -208,6 +215,27 @@ def validate(data):
             message = (f"Line {i + 1}: Amount is {difference:.2f} below Quantity × Unit price; check a possible discount."
                        if difference > 0 else f"Line {i + 1}: Amount exceeds Quantity × Unit price. Check the values.")
             issue(prefix + ".arithmetic", message)
+    # Repeated adjacent matches can expose a shifted Amount column. This is a
+    # review clue, never permission to reassign amounts or force the paid total.
+    for direction in (-1, 1):
+        shifted = []
+        for i, values in enumerate(row_numbers):
+            j = i + direction
+            if not 0 <= j < len(row_numbers) or len(values) != 3 or len(row_numbers[j]) != 3:
+                continue
+            other = row_numbers[j]
+            if not all(value > 0 for value in (*values.values(), *other.values())):
+                continue
+            if (abs(values["quantity"] * values["unit_price"] - values["line_total"]) > Decimal("0.005") and
+                    abs(other["quantity"] * other["unit_price"] - values["line_total"]) <= Decimal("0.005")):
+                shifted.append((i, j))
+        if len(shifted) >= 3:
+            for i, j in shifted:
+                for entry in issues:
+                    if entry["field"] == f"items.{i}.arithmetic":
+                        entry["message"] += (f" Possible shifted Amount column: this Amount matches line {j + 1}'s "
+                                             "Quantity times Unit price, as part of a repeated adjacent-row pattern. "
+                                             "Check row alignment before treating differences as discounts; no values were moved.")
     if not items:
         issue("items", "Add one or more line items.", True)
     elif len(item_totals) == len(items) and "total" in numbers:

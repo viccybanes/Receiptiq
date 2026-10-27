@@ -975,7 +975,8 @@ class VisionEngine:
                 detail["status"] = "read"
             recovery_notices.append(
                 "Dense table: read image sections separately; OCR text was omitted because handwriting hints were uncertain. "
-                "Check every section boundary, item, and number against the original; sections can still miss or misread writing."
+                "Check every section boundary, item, and number against the original, including crossed-out rows and "
+                "overwritten cells; sections can still miss or misread writing."
                 if detail["status"] == "read" else
                 "Dense table detail reading was incomplete or unavailable; kept the earlier full-page extraction for review.")
         focused = None

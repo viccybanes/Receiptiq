@@ -105,7 +105,9 @@ def detail_bands(lines, dimensions):
         plausible = (row["page"] == 0 and len(fragments) >= 4 and
                      row["box"][2] - row["box"][0] >= width * .55 and
                      sum(bool(any(c.isdigit() for c in line["text"])) for line in fragments) >= 2)
-        if run and (not plausible or row["y"] - run[-1]["y"] > max(row["height"], run[-1]["height"]) * 2):
+        # A detached amount or wrapped word is not a table boundary. Measure the
+        # gap between plausible rows so stray OCR fragments cannot hide a dense table.
+        if plausible and run and row["y"] - run[-1]["y"] > max(row["height"], run[-1]["height"]) * 2:
             runs.append(run)
             run = []
         if plausible:
