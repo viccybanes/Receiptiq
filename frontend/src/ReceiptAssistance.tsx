@@ -36,7 +36,7 @@ function differences(current: ReceiptData, proposed: ReceiptData): Difference[] 
 
 export default function ReceiptAssistance({ receipt, draft, pageId, crop, onSelectRegion, saveDraft,
   onReceipt, onApplied, onChange, onBusy, onError, onOpenReceipt, readingActions }: Props) {
-  const [model, setModel] = useState('qwen3-vl:2b-instruct')
+  const [model, setModel] = useState(receipt.vision_settings?.provider === 'google' ? 'google' : 'qwen3-vl:2b-instruct')
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
@@ -47,7 +47,9 @@ export default function ReceiptAssistance({ receipt, draft, pageId, crop, onSele
   const [assignee, setAssignee] = useState(receipt.assignee || '')
   const [secondReview, setSecondReview] = useState(!!receipt.second_review)
   const candidate = receipt.candidate
-  const googleVision = receipt.vision_settings?.provider === 'google'
+  const googleVision = model === 'google'
+  const googleReady = receipt.vision_settings?.provider === 'google' &&
+    receipt.vision_settings.google_consent && receipt.vision_settings.google_key_saved
   const job = receipt.vision_job
   const activeJob = !!job && ['queued', 'processing', 'running'].includes(job.state)
   const stale = !!candidate && candidate.base_revision !== receipt.revision
@@ -58,6 +60,9 @@ export default function ReceiptAssistance({ receipt, draft, pageId, crop, onSele
   useEffect(() => { setAssignee(receipt.assignee || ''); setSecondReview(!!receipt.second_review) },
     [receipt.id, receipt.assignee, receipt.second_review])
   useEffect(() => { setExamples(null); setExampleNotice(''); setError(''); setMessage('') }, [receipt.id])
+  useEffect(() => {
+    setModel(receipt.vision_settings?.provider === 'google' ? 'google' : 'qwen3-vl:2b-instruct')
+  }, [receipt.id, receipt.vision_settings?.provider])
 
   async function action(name: string, run: () => Promise<void>) {
     setBusy(name); setError(''); setMessage(''); onBusy(true)
@@ -75,7 +80,8 @@ export default function ReceiptAssistance({ receipt, draft, pageId, crop, onSele
     if (!pageId) return
     void action(region ? 'region' : 'vision', async () => {
       const current = await freshReceipt()
-      await post('/receipts/' + receipt.id + '/vision', { revision: current.revision, page_id: pageId, crop: region, model })
+      await post('/receipts/' + receipt.id + '/vision', { revision: current.revision, page_id: pageId, crop: region,
+        provider: googleVision ? 'google' : 'local', model: googleVision ? undefined : model })
       onReceipt(await api<Receipt>('/receipts/' + receipt.id))
     })
   }
@@ -132,7 +138,7 @@ export default function ReceiptAssistance({ receipt, draft, pageId, crop, onSele
 
   return <section className="receipt-assistance" aria-label="Receipt assistance">
     {readingActions && createPortal(<>
-      <button type="button" disabled={!pageId || !!busy || activeJob} onClick={() => requestVision(null)}>
+      <button type="button" disabled={!pageId || !!busy || activeJob || (googleVision && !googleReady)} onClick={() => requestVision(null)}>
         {busy === 'vision' ? <LoaderCircle size={15} className="spin" /> : <ScanText size={15} />}Use vision</button>
       <button type="button" className="primary" disabled={!candidate || !!busy || stale || activeJob || candidate.auto_applied} onClick={applyCandidate}>
         {busy === 'apply' ? <LoaderCircle size={15} className="spin" /> : <Check size={15} />}Apply vision</button>
@@ -141,12 +147,15 @@ export default function ReceiptAssistance({ receipt, draft, pageId, crop, onSele
     <p className="assistance-help">{needsHelp ? 'Some fields need a closer look. Read this page or select a region to compare another suggestion.' :
       'Ask the selected model for another reading of the selected page or a specific region.'}</p>
     <div className="assistance-vision-controls">
-      {googleVision ? <p className="assistance-help">Google · {receipt.vision_settings?.google_model}</p> :
-        <label><span>Vision model</span><select value={model} disabled={!!busy || activeJob} onChange={event => setModel(event.target.value)}>
-          <option value="qwen3-vl:2b-instruct">Qwen3-VL 2B · lighter</option><option value="qwen3-vl:4b-instruct">Qwen3-VL 4B · larger</option></select></label>}
+      <label><span>Vision model</span><select value={model} disabled={!!busy || activeJob} onChange={event => setModel(event.target.value)}>
+        <option value="qwen3-vl:2b-instruct">Qwen3-VL 2B · lighter</option>
+        <option value="qwen3-vl:4b-instruct">Qwen3-VL 4B · larger</option>
+        <option value="google" disabled={!googleReady}>Gemini · {receipt.vision_settings?.google_model || 'Google AI Studio'}</option>
+      </select></label>
+      {!googleReady && <p className="assistance-help">To use Gemini, enable Google with an API key and cloud consent in Workspace settings.</p>}
       <div className="assistance-actions">
         <button type="button" disabled={!pageId || !!busy || activeJob} onClick={onSelectRegion}><Crop size={15} />Select region</button>
-        <button type="button" disabled={!pageId || !crop || !!busy || activeJob} onClick={() => requestVision(crop)}>
+        <button type="button" disabled={!pageId || !crop || !!busy || activeJob || (googleVision && !googleReady)} onClick={() => requestVision(crop)}>
           {busy === 'region' ? <LoaderCircle size={15} className="spin" /> : <ScanText size={15} />}Read this region again</button></div>
     </div>
     {crop && <p className="assistance-region-note">Region selected. Read it again to get a focused suggestion.</p>}

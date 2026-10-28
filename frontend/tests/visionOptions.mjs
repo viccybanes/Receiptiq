@@ -12,6 +12,7 @@ const { visionOverlay } = await import('data:text/javascript;base64,' + Buffer.f
 let settings = { amount_first: false, capture_regions: false, provider: 'local', google_model: 'gemini-3.8-flash',
   google_consent: false, google_key_saved: false }
 let rejectProvider = false
+const visionRequests = []
 const testKey = 'synthetic-ui-key-never-a-real-credential'
 const data = { supplier: 'Synthetic hardware', receipt_number: '001', receipt_date: '2026-10-25', currency: 'PHP',
   subtotal: '', tax: '', discount: '', total: '60.00', notes: '', receipt_photo_id: '',
@@ -81,7 +82,10 @@ await page.route('**/api/v1/**', async route => {
     runtime_version: 'test', models: ['qwen3-vl:2b-instruct'], profile: '2b', job: {} }
   else if (pathname.startsWith('/receipts/vision-sample/pages/')) return route.fulfill({ contentType: 'image/svg+xml',
     body: '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="1000"><rect width="800" height="1000" fill="white"/><g font-family="Arial" font-size="28"><text x="80" y="100">SYNTHETIC HARDWARE</text><text x="80" y="290">Cable                 2 pcs        25.00       50.00</text><text x="80" y="390">Connector          2 pcs         5.00       10.00</text><text x="500" y="600">Total 60.00</text></g></svg>' })
-  else if (pathname === '/receipts/vision-sample') {
+  else if (pathname === '/receipts/vision-sample/vision') {
+    visionRequests.push(route.request().postDataJSON())
+    body = { id: 'synthetic-vision-job', accepted: true }
+  } else if (pathname === '/receipts/vision-sample') {
     if (route.request().method() === 'PATCH') {
       receipt = { ...receipt, data: route.request().postDataJSON().data, revision: receipt.revision + 1 }
     }
@@ -92,6 +96,9 @@ await page.route('**/api/v1/**', async route => {
 try {
   await page.goto('http://127.0.0.1:' + server.address().port)
   await page.locator('[data-receipt-id="vision-sample"]').click()
+  const modelSelect = page.getByRole('combobox', { name: 'Vision model', exact: true })
+  assert.equal(await modelSelect.inputValue(), 'qwen3-vl:2b-instruct')
+  assert.equal(await modelSelect.locator('option[value="google"]').evaluate(option => option.disabled), true)
   await page.getByRole('checkbox', { name: 'Show AI line numbers', exact: true }).check()
   await page.locator('.vision-row-overlay').waitFor()
   assert.equal(await page.locator('.vision-row-overlay rect').count(), 2)
@@ -120,6 +127,29 @@ try {
   assert.equal(await page.evaluate(key => JSON.stringify(localStorage).includes(key), testKey), false)
   await page.getByRole('button', { name: 'Close workspace settings' }).click()
   await page.getByRole('heading', { name: 'Read with Google vision' }).waitFor()
+  assert.equal(await modelSelect.inputValue(), 'google')
+  assert.equal(await modelSelect.locator('option[value="google"]').evaluate(option => option.disabled), false)
+  assert.match(await modelSelect.locator('option[value="google"]').textContent(), /Gemini.*gemini-3\.8-flash/)
+  for (const model of ['google', 'qwen3-vl:2b-instruct', 'qwen3-vl:4b-instruct']) {
+    await modelSelect.selectOption(model)
+    const response = page.waitForResponse(value => value.url().endsWith('/receipts/vision-sample/vision'))
+    await page.getByRole('button', { name: 'Use vision', exact: true }).click()
+    await response
+    const request = visionRequests.at(-1)
+    assert.equal(request.provider, model === 'google' ? 'google' : 'local')
+    assert.equal(request.model, model === 'google' ? undefined : model)
+    assert.equal(settings.provider, 'google')
+  }
+  await modelSelect.selectOption('google')
+  const modelFolder = new URL('../../artifacts/google-vision/', import.meta.url)
+  await fs.mkdir(modelFolder, { recursive: true })
+  for (const [name, width, height] of [['desktop', 1440, 1000], ['mobile', 390, 844]]) {
+    await page.setViewportSize({ width, height })
+    await modelSelect.scrollIntoViewIfNeeded()
+    await page.screenshot({ path: fileURLToPath(new URL(name + '-model.png', modelFolder)) })
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 })
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   await page.getByText('Active: Google AI Studio', { exact: true }).waitFor()
   assert.equal(await page.getByLabel('Vision provider', { exact: true }).inputValue(), 'google')
@@ -139,6 +169,8 @@ try {
   assert.equal(settings.google_key_saved, false)
   await page.getByRole('button', { name: 'Close workspace settings' }).click()
   await page.getByRole('heading', { name: 'Read with local vision' }).waitFor()
+  assert.equal(await modelSelect.inputValue(), 'qwen3-vl:2b-instruct')
+  assert.equal(await modelSelect.locator('option[value="google"]').evaluate(option => option.disabled), true)
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   await page.getByRole('checkbox', { name: 'Read Amount first', exact: true }).check()
   await page.getByText('Saved. These options apply to the next Vision run.').waitFor()

@@ -138,6 +138,45 @@ def test_reentering_key_after_restore_requires_enabling_google_again(client, goo
     assert saved['provider'] == 'local' and saved['google_consent'] is False
 
 
+@pytest.mark.parametrize('provider, model', [('google', MODEL), ('local', 'qwen3-vl:2b-instruct'),
+                                           ('local', 'qwen3-vl:4b-instruct')])
+def test_manual_model_choice_routes_without_changing_upload_provider(client, google, monkeypatch, provider, model):
+    receipt, _ = ready_receipt(client)
+    local_models = []
+
+    def local_extract(images, lines, **options):
+        local_models.append(options['model'])
+        return {'draft': options['current'], 'model': options['model'], 'field_meta': {}}
+
+    monkeypatch.setattr(client.worker.vision, 'extract', local_extract)
+    body = {'revision': receipt['revision'], 'page_id': receipt['pages'][0]['id'], 'provider': provider}
+    if provider == 'local':
+        body['model'] = model
+    response = client.post(f"/api/v1/receipts/{receipt['id']}/vision", json=body)
+    assert response.status_code == 202, response.text
+    job = client.store.one('SELECT payload_json FROM jobs WHERE id=?', (response.json()['id'],))
+    payload = json.loads(job['payload_json'])
+    assert payload['provider'] == provider and payload['model'] == model
+    assert client.worker.process_one()
+    assert local_models == ([model] if provider == 'local' else [])
+    assert len(google['requests']) == (1 if provider == 'google' else 0)
+    assert load_vision_settings(client.store.root).provider == 'google'
+
+
+@pytest.mark.parametrize('unavailable', ['disabled', 'missing-key'])
+def test_manual_google_choice_requires_enabled_provider_and_key(client, google, unavailable):
+    receipt, _ = ready_receipt(client)
+    if unavailable == 'disabled':
+        client.patch('/api/v1/vision/settings', json={'provider': 'local'})
+    else:
+        (client.store.root / KEY_FILE).unlink()
+    response = client.post(f"/api/v1/receipts/{receipt['id']}/vision", json={
+        'revision': receipt['revision'], 'page_id': receipt['pages'][0]['id'], 'provider': 'google'})
+    assert response.status_code == 409 and 'disabled' in response.json()['detail']
+    assert not google['requests']
+    assert not client.store.one("SELECT id FROM jobs WHERE receipt_id=? AND kind='vision'", (receipt['id'],))
+
+
 def test_google_manual_scan_preserves_verification_until_apply_and_sends_no_history(client, google, monkeypatch):
     receipt, _ = ready_receipt(client)
     assert verify(client, receipt).status_code == 200

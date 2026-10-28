@@ -29,10 +29,10 @@ def public_vision_settings(root):
     return {**load_vision_settings(root).model_dump(), "google_key_saved": (root / KEY_FILE).is_file()}
 
 
-def selected_vision(root, model=None):
+def selected_vision(root, model=None, *, provider=None):
     """Pin a non-secret provider/model selection before work enters the durable queue."""
     settings = load_vision_settings(root)
-    if settings.provider == "google":
+    if (provider or settings.provider) == "google":
         return {"provider": "google", "model": settings.google_model}
     if model is None:
         from .vision import ALLOWED_MODELS, DEFAULT_MODEL
