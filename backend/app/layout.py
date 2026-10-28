@@ -2,6 +2,7 @@
 
 import math
 import os
+import re
 from statistics import median
 
 
@@ -130,3 +131,37 @@ def detail_bands(lines, dimensions):
     if any(not 0 <= top < bottom <= 1 or bottom - top < .04 for top, bottom in zip(cuts, cuts[1:])):
         return []
     return [[0.0, top, 1.0, bottom] for top, bottom in zip(cuts, cuts[1:])]
+
+
+def item_table_band(lines, dimensions):
+    """Locate one uncertain table from printed anchors, without splitting its rows."""
+    if len(dimensions) != 1:
+        return []
+    width, height = dimensions[0]
+    valid = [line for line in lines if isinstance(line, dict) and isinstance(line.get("text"), str) and
+             line.get("page", 0) == 0 and valid_box(line.get("box")) and
+             0 <= line["box"][0] < line["box"][2] <= width and 0 <= line["box"][1] < line["box"][3] <= height]
+    scored = [line for line in valid if type(line.get("score")) in (int, float) and
+              math.isfinite(line["score"]) and 0 <= line["score"] <= 1]
+    anchors = [(re.sub(r"[^a-z]", "", line["text"].lower()), line["box"])
+               for line in scored if line["score"] >= .85]
+    heads = [box for text, box in anchors if text == "itemdescription"]
+    if len(heads) != 1:
+        return []
+    head = heads[0]
+    padding = head[3] - head[1]
+    columns = {text for text, box in anchors if text in ("quantity", "unitcost", "unitprice", "price", "amount")
+               and abs(box[1] - head[1]) <= padding * 3}
+    footers = [box[1] for text, box in anchors if box[1] > head[3] and
+               text in ("vatablesales", "totalsales", "totalsalesvatinclusive", "totalamountdue")]
+    if len(columns) < 2 or not footers:
+        return []
+    top, bottom = max(0, head[1] - padding), min(footers)
+    body = [line for line in valid if head[3] < line["box"][1] and line["box"][3] < bottom]
+    scores = [line["score"] for line in scored if head[3] < line["box"][1] and line["box"][3] < bottom]
+    # Printed headings can hide poor handwriting in the page-wide median.
+    # Confidence only selects a reading aid; it is not a correctness probability.
+    if (not .08 <= (bottom - top) / height <= .7 or not 3 <= len(group_rows(body)) <= 24 or
+            len(scores) < 8 or sum(score < .8 for score in scores) < max(4, len(scores) / 4)):
+        return []
+    return [[0.0, top / height, 1.0, bottom / height]]

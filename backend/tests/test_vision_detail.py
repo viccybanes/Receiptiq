@@ -7,7 +7,7 @@ import threading
 import pytest
 from PIL import Image
 
-from app.layout import detail_bands
+from app.layout import detail_bands, item_table_band
 from app.vision import (
     MAX_OCR_PROMPT_CHARS,
     VisionEngine,
@@ -27,6 +27,68 @@ def dense_lines(count=10, score=.7):
                                   (560, 620, "5.00"), (700, 760, "10.00")]:
             lines.append({"text": text, "score": score, "box": [left, 100 + i * 30, right, 120 + i * 30]})
     return lines
+
+
+def short_table_lines():
+    lines = dense_lines(6)
+    for left, right, text in [(50, 320, "Item Description/"), (430, 490, "Quantity"), (700, 760, "Amount")]:
+        lines.append({"text": text, "score": .99, "box": [left, 60, right, 80]})
+    lines.append({"text": "VATable Sales", "score": .99, "box": [50, 400, 200, 420]})
+    return lines
+
+
+def test_uncertain_short_table_uses_headers_without_splitting_rows():
+    bands = item_table_band(short_table_lines(), [(800, 1000)])
+    assert bands == [[0, .04, 1, .4]]
+    assert all(bands[0][1] * 1000 < line["box"][1] < line["box"][3] < bands[0][3] * 1000
+               for line in dense_lines(6))
+
+
+@pytest.mark.parametrize("case", ["no_footer", "two_headers", "confident", "unknown", "multiple_pages"])
+def test_table_focus_skips_ambiguous_or_confident_layouts(case):
+    lines = short_table_lines()
+    if case == "no_footer":
+        lines.pop()
+    elif case == "two_headers":
+        lines.append({"text": "Item Description", "score": .99, "box": [50, 500, 320, 520]})
+    elif case in ("confident", "unknown"):
+        for line in lines[:24]:
+            line["score"] = .99 if case == "confident" else float("nan")
+    dimensions = [(800, 1000)] * (2 if case == "multiple_pages" else 1)
+    assert item_table_band(lines, dimensions) == []
+
+
+def test_complete_table_read_survives_wrong_model_count_with_visible_warning(detail_engine):
+    engine, path, state = detail_engine
+    table = response(["Cable", "Bolts"])
+    table.visible_item_count = 1
+    table.items[0].quantity, table.items[0].unit = "2 pcs", "per"
+    state["responses"] = [response(["Cable", "Total Sales"]), table]
+    result = engine.extract([path], short_table_lines())
+    assert [item["description"] for item in result["draft"]["items"]] == ["Cable", "Bolts"]
+    assert result["draft"]["items"][0]["quantity"] == "2"
+    assert result["draft"]["items"][0]["unit"] == "pcs"
+    assert result["row_audit"]["mismatch"] and "Item row count needs review" in result["notice"]
+    assert result["row_audit"]["scope"] == "crop"
+    assert result["provenance"]["detail_read"]["kind"] == "table"
+    assert result["provenance"]["detail_read"]["status"] == "read"
+    assert len(state["requests"]) == 2 and result["provenance"]["ocr_context_lines"] == 0
+
+
+@pytest.mark.parametrize("failure", ["partial", "blank_row", "unavailable"])
+def test_unusable_table_read_keeps_full_page_fallback(detail_engine, failure):
+    engine, path, state = detail_engine
+    table = response(["New reading"])
+    if failure == "partial":
+        table = table, True
+    elif failure == "blank_row":
+        table.items[0].description = table.items[0].quantity = table.items[0].unit_price = table.items[0].line_total = ""
+    else:
+        table = VisionError("Unavailable")
+    state["responses"] = [response(["Original"]), table]
+    result = engine.extract([path], short_table_lines())
+    assert [item["description"] for item in result["draft"]["items"]] == ["Original"]
+    assert result["provenance"]["detail_read"]["status"] == "unresolved"
 
 
 def response(names, amount="10"):

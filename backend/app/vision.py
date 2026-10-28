@@ -22,7 +22,7 @@ from pydantic_core import from_json
 from .extraction import decimal, extraction_date, validate
 from .imaging import MAX_PAGES, inspect_file
 from .imaging import pages as image_pages
-from .layout import detail_bands, group_rows, layout_assistance_enabled, valid_box
+from .layout import detail_bands, group_rows, item_table_band, layout_assistance_enabled, valid_box
 from .models import Item, ReceiptData, StrictModel
 
 DEFAULT_MODEL = "qwen3-vl:2b-instruct"
@@ -442,7 +442,7 @@ def _example_context(examples):
 
 def _unit_value(value):
     value = value.strip()
-    if value.casefold() == "x" or re.match(r"-?[\d.,]", value) or not re.search(r"[A-Za-z]", value):
+    if value.casefold() in ("x", "per") or re.match(r"-?[\d.,]", value) or not re.search(r"[A-Za-z]", value):
         return ""
     aliases = {"pcs": ("pc", "pcs", "piece", "pieces"),
                "mtrs": ("mtr", "mtrs", "meter", "meters", "metre", "metres"),
@@ -514,6 +514,10 @@ def _normalize_candidate(candidate, amount_first=False):
                     item.unit_price = numeric_unit
                     notices.append(f"Line {index + 1}: recovered shifted Unit price from the numeric Unit response; "
                                    "verify both price and Amount against the image.")
+            else:
+                notices.append(f"Line {index + 1}: conflicting Unit readings {pair[2]} / {item.unit}; "
+                               f"kept explicit Quantity {pair[1]} and left the proposed Unit blank for review.")
+                item.quantity, item.unit = pair[1], ""
         original_unit = item.unit
         unit_pair = re.fullmatch(r"(-?[\d.,]+)\s*([A-Za-z]+\.?)", item.unit.strip())
         if unit_pair and _numeric_value("quantity", unit_pair[1]) == _numeric_value("quantity", item.quantity):
@@ -851,9 +855,11 @@ class VisionEngine:
         crop = _crop_rect(crop)
         images, dimensions = _images(pages, crop)
         layout_enabled = layout_assistance_enabled()
-        bands = (detail_bands(_selected_ocr_lines(ocr_lines, None, dimensions), dimensions)
-                 if layout_enabled and crop is None else [])
-        # Dense uncertain OCR is useful for locating sections, but its garbled text
+        bands = []
+        if layout_enabled and crop is None:
+            selected = _selected_ocr_lines(ocr_lines, None, dimensions)
+            bands = detail_bands(selected, dimensions) or item_table_band(selected, dimensions)
+        # Uncertain OCR is useful for locating tables, but its garbled text
         # biased handwriting and overflowed the model budget in the real-image check.
         entries = [] if bands else _ocr_context(ocr_lines, crop, dimensions)
         prompt_lines, context_line_count = (_compact_ocr_context(entries) if layout_enabled else (entries, len(entries)))
@@ -924,7 +930,7 @@ class VisionEngine:
             payload["messages"][1]["content"] = json.dumps(context, ensure_ascii=False)
         detail = None
         if bands:
-            detail = {"status": "unresolved", "sections": []}
+            detail = {"status": "unresolved", "kind": "table" if len(bands) == 1 else "sections", "sections": []}
             detail_items, detail_notes, detail_numeric, counts = [], [], [], []
             for index, region in enumerate(bands):
                 _cancelled(stop)
@@ -945,7 +951,11 @@ class VisionEngine:
                     reread, recovered = self._read_receipt(section_payload, stop)
                     notes = _normalize_candidate(reread, amount_first)
                     audit = _row_audit(reread, region)
-                    if recovered or audit["mismatch"] or not reread.items:
+                    # A complete single-table response can have a mistaken model
+                    # count. Keep it with the row-audit warning, as on the ordinary
+                    # path; do not discard readable rows solely to satisfy a count.
+                    if (recovered or not reread.items or audit["retained_item_count"] != len(reread.items) or
+                            (audit["mismatch"] and len(bands) > 1)):
                         section["status"] = "incomplete"
                         break
                     # Map optional model regions back to the original page before merge.
@@ -989,14 +999,18 @@ class VisionEngine:
                 removed_duplicates = 0  # The detail result replaces the earlier item inventory.
                 if capture_regions:
                     _locate_rows(candidate, ocr_lines, dimensions, None)
-                row_audit = _row_audit(candidate, None)
+                row_audit = _row_audit(candidate, bands[0] if detail["kind"] == "table" else None)
                 detail["status"] = "read"
             recovery_notices.append(
+                "Read the item table in one closer image view using printed headings and totals as boundaries. "
+                "OCR wording was omitted because handwriting hints were uncertain. Check rows near both boundaries, "
+                "crossed-out entries and every number against the original."
+                if detail["status"] == "read" and detail["kind"] == "table" else
                 "Dense table: read image sections separately; OCR text was omitted because handwriting hints were uncertain. "
                 "Check every section boundary, item, and number against the original, including crossed-out rows and "
                 "overwritten cells; sections can still miss or misread writing."
                 if detail["status"] == "read" else
-                "Dense table detail reading was incomplete or unavailable; kept the earlier full-page extraction for review.")
+                "Table detail reading was incomplete or unavailable; kept the earlier full-page extraction for review.")
         focused = None
         # Share the existing two-call budget: completeness recheck OR one missing-Amount crop.
         if layout_enabled and not bands and not attempt and not partial_response and not row_audit["mismatch"]:

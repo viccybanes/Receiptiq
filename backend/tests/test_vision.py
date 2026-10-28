@@ -604,7 +604,7 @@ def test_row_audit_recovers_items_despite_invalid_counts(page, runtime, count):
 @pytest.mark.parametrize(('raw', 'unit', 'quantity', 'expected_unit'), [
     ('20 boxes', '', '20', 'boxes'), ('5pcs', '', '5', 'pcs'),
     ('5 pcs.', 'unit', '5', 'pcs'), ('2.000 kg', '', '2000', 'kgs'),
-    ('5 PCS', 'pcs', '5', 'pcs'), ('5 pcs', 'boxes', '', 'boxes'),
+    ('5 PCS', 'pcs', '5', 'pcs'),
     ('1.5 pcs', '', '', 'unit'), ('5 x', '', '', 'unit'),
     ('5 @ 10', '', '', 'unit'),
 ])
@@ -625,6 +625,20 @@ def test_combined_quantity_unit_is_preserved_without_guessing_or_overriding_conf
         assert result['field_meta']['items.0.unit']['source'] == 'local_vision'
     else:
         assert 'invalid numeric reading' in result['notice']
+
+
+@pytest.mark.parametrize('existing_unit', ['', 'bag'])
+def test_conflicting_units_preserve_explicit_quantity_and_require_review(page, runtime, existing_unit):
+    runtime['result'] = {'visible_item_count': 1, 'items': [
+        {'description': 'Screws', 'quantity': '5 boxes', 'unit': 'pcs'}]}
+    current = ReceiptData(items=[{'description': 'Screws', 'unit': existing_unit}]).model_dump() if existing_unit else None
+    before = copy.deepcopy(current)
+    result = runtime['engine'].extract([page], [], current=current)
+    item = result['draft']['items'][0]
+    assert item['quantity'] == '5'
+    assert item['unit'] == (existing_unit or 'unit')
+    assert 'conflicting Unit readings' in result['notice']
+    assert current == before
 
 
 def test_row_count_mismatch_gets_one_sequential_image_recheck(page, runtime):
