@@ -1,6 +1,6 @@
 # Optional Google AI Studio vision
 
-Requested 2026-10-28. This feature explicitly supersedes the older no-cloud-AI rule for an optional, user-selected Google provider. The original four milestones in `PLAN.md` remain unchanged. Work is scoped to this checkout; the main checkout and installed app are separate.
+Requested 2026-10-28. This feature explicitly supersedes the older no-cloud-AI rule for an optional, user-selected Google provider. The original four milestones in `PLAN.md` remain unchanged. Promoted to `main` on 2026-10-29 at the user's request; the canonical checkout is `C:\Users\ruthl\Desktop\Codink\ReceiptIQ`. The installed app remains a separate, older build.
 
 ## Implementation
 
