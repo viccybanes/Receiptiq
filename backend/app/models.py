@@ -84,6 +84,7 @@ class VisionInput(StrictModel):
     crop: list[float] | None = Field(default=None, min_length=4, max_length=4)
     model: Literal["qwen3-vl:2b-instruct", "qwen3-vl:4b-instruct"] = "qwen3-vl:2b-instruct"
     provider: Literal["local", "google"] | None = None
+    google_model: str | None = Field(default=None, max_length=100, pattern=r"^gemini-[a-zA-Z0-9._-]+$")
 
     @model_validator(mode="after")
     def valid_crop(self):

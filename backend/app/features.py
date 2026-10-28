@@ -158,7 +158,7 @@ def install_routes(app, store, worker):
                                           "AND state IN ('queued','processing')", (receipt_id,)).fetchone()
             if existing:
                 return {"id": existing["id"], "accepted": True}
-            selection = selected_vision(store.root, body.model, provider=body.provider)
+            selection = selected_vision(store.root, body.model, provider=body.provider, google_model=body.google_model)
             if selection["provider"] == "google":
                 try:
                     require_google_enabled(store.root)

@@ -250,8 +250,9 @@ export default function WorkspaceSettings({ onClose, onTemplatesChanged }: Props
               <span className="settings-muted">{visionSettings?.google_key_saved ? 'Key saved' : 'No key saved'}</span>
             </div>
             <p className="settings-muted">Protected for your Windows user. The key is never shown again or included in backups; re-enter it after restoring a backup.</p>
-            <label className="settings-field"><span>Gemini model</span><input value={googleModel} maxLength={100}
+            <label className="settings-field"><span>Gemini model</span><input value={googleModel} maxLength={100} list="gemini-model-options"
               spellCheck={false} onChange={event => setGoogleModel(event.target.value)} aria-describedby="gemini-model-help" /></label>
+            <datalist id="gemini-model-options"><option value="gemini-3.8-flash" /><option value="gemini-3.5-flash-lite" /></datalist>
             <p id="gemini-model-help" className="settings-muted">Use an image-capable Gemini model with structured JSON support from your AI Studio project.</p>
             <label className="settings-confirm"><input type="checkbox" checked={cloudConsent}
               onChange={event => setCloudConsent(event.target.checked)} />

@@ -9,6 +9,7 @@ import zipfile
 
 import httpx
 import pytest
+from pydantic import ValidationError
 from test_workflow import batch, ready_receipt, upload, verify
 from test_workflow import client as client_fixture
 
@@ -16,7 +17,7 @@ from app import google_vision
 from app.backups import create_backup
 from app.google_key import KEY_FILE, load_google_key
 from app.system import _location_files
-from app.vision import VisionError
+from app.vision import VisionError, VisionReceipt, _output_schema
 from app.vision_settings import VisionSettings, load_vision_settings, save_vision_settings
 
 client = client_fixture
@@ -138,7 +139,7 @@ def test_reentering_key_after_restore_requires_enabling_google_again(client, goo
     assert saved['provider'] == 'local' and saved['google_consent'] is False
 
 
-@pytest.mark.parametrize('provider, model', [('google', MODEL), ('local', 'qwen3-vl:2b-instruct'),
+@pytest.mark.parametrize('provider, model', [('google', MODEL), ('google', 'gemini-3.5-flash-lite'), ('local', 'qwen3-vl:2b-instruct'),
                                            ('local', 'qwen3-vl:4b-instruct')])
 def test_manual_model_choice_routes_without_changing_upload_provider(client, google, monkeypatch, provider, model):
     receipt, _ = ready_receipt(client)
@@ -152,6 +153,8 @@ def test_manual_model_choice_routes_without_changing_upload_provider(client, goo
     body = {'revision': receipt['revision'], 'page_id': receipt['pages'][0]['id'], 'provider': provider}
     if provider == 'local':
         body['model'] = model
+    elif model != MODEL:
+        body['google_model'] = model
     response = client.post(f"/api/v1/receipts/{receipt['id']}/vision", json=body)
     assert response.status_code == 202, response.text
     job = client.store.one('SELECT payload_json FROM jobs WHERE id=?', (response.json()['id'],))
@@ -160,7 +163,10 @@ def test_manual_model_choice_routes_without_changing_upload_provider(client, goo
     assert client.worker.process_one()
     assert local_models == ([model] if provider == 'local' else [])
     assert len(google['requests']) == (1 if provider == 'google' else 0)
+    if provider == 'google':
+        assert google['requests'][0].url.path.endswith(f'/models/{model}:generateContent')
     assert load_vision_settings(client.store.root).provider == 'google'
+    assert load_vision_settings(client.store.root).google_model == MODEL
 
 
 @pytest.mark.parametrize('unavailable', ['disabled', 'missing-key'])
@@ -171,10 +177,35 @@ def test_manual_google_choice_requires_enabled_provider_and_key(client, google, 
     else:
         (client.store.root / KEY_FILE).unlink()
     response = client.post(f"/api/v1/receipts/{receipt['id']}/vision", json={
-        'revision': receipt['revision'], 'page_id': receipt['pages'][0]['id'], 'provider': 'google'})
+        'revision': receipt['revision'], 'page_id': receipt['pages'][0]['id'], 'provider': 'google',
+        'google_model': 'gemini-3.5-flash-lite'})
     assert response.status_code == 409 and 'disabled' in response.json()['detail']
     assert not google['requests']
     assert not client.store.one("SELECT id FROM jobs WHERE receipt_id=? AND kind='vision'", (receipt['id'],))
+
+
+@pytest.mark.parametrize('capture_regions', [False, True])
+def test_google_schema_omits_large_array_bound_but_retains_local_validation(client, google, capture_regions):
+    schema = _output_schema(capture_regions)
+    original = copy.deepcopy(schema)
+    google['engine']._read_receipt({'model': MODEL, 'format': schema, 'messages': [
+        {'content': 'Read the synthetic receipt.'}, {'content': '{}', 'images': []}]}, stop=None)
+    sent = json.loads(google['requests'][0].content)['generationConfig']['responseJsonSchema']
+    assert 'maxItems' not in sent['properties']['items']
+    assert sent['properties']['reading_notes']['maxItems'] == 12
+    if capture_regions:
+        assert sent['$defs']['VisionItem']['properties']['source_box']['anyOf'][0]['maxItems'] == 4
+    assert schema == original and schema['properties']['items']['maxItems'] == 1000
+    with pytest.raises(ValidationError):
+        VisionReceipt.model_validate({'items': [{}] * 1001})
+
+
+def test_manual_google_model_rejects_invalid_id(client, google):
+    receipt, _ = ready_receipt(client)
+    response = client.post(f"/api/v1/receipts/{receipt['id']}/vision", json={
+        'revision': receipt['revision'], 'page_id': receipt['pages'][0]['id'], 'provider': 'google',
+        'google_model': '../../other-host'})
+    assert response.status_code == 422 and not google['requests']
 
 
 def test_google_manual_scan_preserves_verification_until_apply_and_sends_no_history(client, google, monkeypatch):
@@ -267,7 +298,7 @@ def test_revoked_google_upload_is_not_sent_or_retried(client, google):
 
 
 @pytest.mark.parametrize('status, hint', [(400, 'rejected'), (401, 'key'), (403, 'denied'), (404, 'model'),
-                                       (429, 'quota'), (500, 'unavailable'), (302, 'unavailable')])
+                                       (429, 'quota'), (500, 'unavailable'), (503, 'busy'), (302, 'unavailable')])
 def test_cloud_http_errors_are_safe_visible_and_not_automatically_retried(client, google, status, hint, caplog):
     receipt, _ = ready_receipt(client)
     google['status'] = status
@@ -312,13 +343,14 @@ def test_cloud_recovery_and_blocked_output_are_not_silently_accepted(client, goo
         assert current['vision_job']['state'] == 'failed' and current['candidate'] is None
 
 
-def test_cloud_timeout_error_hides_transport_details(client, google, caplog):
+@pytest.mark.parametrize('exception, hint', [(httpx.ReadTimeout, 'response'), (httpx.ConnectTimeout, 'Connection')])
+def test_cloud_timeout_error_hides_transport_details(client, google, caplog, exception, hint):
     receipt, _ = ready_receipt(client)
-    google['exception'] = httpx.ReadTimeout(KEY)
+    google['exception'] = exception(KEY)
     scan(client, receipt)
     assert client.worker.process_one()
     job = client.store.receipt(receipt['id'])['vision_job']
-    assert 'timed out' in job['error'] and KEY not in job['error'] and KEY not in caplog.text
+    assert 'timed out' in job['error'] and hint in job['error'] and KEY not in job['error'] and KEY not in caplog.text
 
 
 def test_cloud_response_limit(client, google, monkeypatch):

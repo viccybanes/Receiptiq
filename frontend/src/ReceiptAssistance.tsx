@@ -47,7 +47,7 @@ export default function ReceiptAssistance({ receipt, draft, pageId, crop, onSele
   const [assignee, setAssignee] = useState(receipt.assignee || '')
   const [secondReview, setSecondReview] = useState(!!receipt.second_review)
   const candidate = receipt.candidate
-  const googleVision = model === 'google'
+  const googleVision = model === 'google' || model.startsWith('gemini-')
   const googleReady = receipt.vision_settings?.provider === 'google' &&
     receipt.vision_settings.google_consent && receipt.vision_settings.google_key_saved
   const job = receipt.vision_job
@@ -62,7 +62,7 @@ export default function ReceiptAssistance({ receipt, draft, pageId, crop, onSele
   useEffect(() => { setExamples(null); setExampleNotice(''); setError(''); setMessage('') }, [receipt.id])
   useEffect(() => {
     setModel(receipt.vision_settings?.provider === 'google' ? 'google' : 'qwen3-vl:2b-instruct')
-  }, [receipt.id, receipt.vision_settings?.provider])
+  }, [receipt.id, receipt.vision_settings?.provider, receipt.vision_settings?.google_model])
 
   async function action(name: string, run: () => Promise<void>) {
     setBusy(name); setError(''); setMessage(''); onBusy(true)
@@ -81,7 +81,8 @@ export default function ReceiptAssistance({ receipt, draft, pageId, crop, onSele
     void action(region ? 'region' : 'vision', async () => {
       const current = await freshReceipt()
       await post('/receipts/' + receipt.id + '/vision', { revision: current.revision, page_id: pageId, crop: region,
-        provider: googleVision ? 'google' : 'local', model: googleVision ? undefined : model })
+        provider: googleVision ? 'google' : 'local', model: googleVision ? undefined : model,
+        google_model: model.startsWith('gemini-') ? model : undefined })
       onReceipt(await api<Receipt>('/receipts/' + receipt.id))
     })
   }
@@ -151,6 +152,8 @@ export default function ReceiptAssistance({ receipt, draft, pageId, crop, onSele
         <option value="qwen3-vl:2b-instruct">Qwen3-VL 2B · lighter</option>
         <option value="qwen3-vl:4b-instruct">Qwen3-VL 4B · larger</option>
         <option value="google" disabled={!googleReady}>Gemini · {receipt.vision_settings?.google_model || 'Google AI Studio'}</option>
+        {receipt.vision_settings?.google_model !== 'gemini-3.5-flash-lite' &&
+          <option value="gemini-3.5-flash-lite" disabled={!googleReady}>Gemini 3.5 Flash-Lite · faster</option>}
       </select></label>
       {!googleReady && <p className="assistance-help">To use Gemini, enable Google with an API key and cloud consent in Workspace settings.</p>}
       <div className="assistance-actions">

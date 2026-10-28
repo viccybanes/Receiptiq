@@ -38,4 +38,14 @@ Completed on 2026-10-28:
 - Desktop URL allowlist: its actual function and existing Rust test module were extracted and compiled with `rustc --test`; **1 passed**, including exact AI Studio/terms URLs and rejection of lookalikes/query strings. Full Tauri build and installer were not run.
 - `PLAN.md` is unchanged. No user workspace or installed app was restarted or migrated.
 
-Live Google inference, account/model availability, billing behavior, and real handwriting quality still require separate validation with an authorized key and test images. No real receipts were uploaded to Google during this work. The feature is committed separately on `feat/google-ai-studio-vision` from this checkout's `29dd1e5` base.
+The checks above did not exercise live Google inference. No real receipts were uploaded to Google during that work. The original feature was committed separately on `feat/google-ai-studio-vision` from this checkout's `29dd1e5` base and subsequently promoted to main.
+
+### Live investigation and model selection, 2026-10-29
+
+- The user explicitly authorized testing their key. The saved key authenticated and Google's model list included both `gemini-3.8-flash` and `gemini-3.5-flash-lite`. Only a generated synthetic receipt image was transmitted; the key was not added to source, logs, or test fixtures.
+- Gemini 3.8 exceeded a 90-second diagnostic read timeout on a small image request. A later request returned HTTP 503 with a high-demand message after 57.78 seconds. Network connectivity and key authentication succeeded; model capacity was a separate failure from the schema issue below.
+- The production receipt schema caused HTTP 400 on Flash-Lite. Removing only `items.maxItems=1000` yielded HTTP 200 while preserving every other constraint. The adapter now makes that change on a copy of the generation schema; the original schema, local 1,000-item validation, and bounded response size remain unchanged.
+- The patched `GoogleVisionEngine.extract` read the synthetic vendor, receipt number, one Cable item, Quantity 2, Unit price 50.00, and Amount/Total 100.00 correctly in 2.23 seconds. This is one synthetic smoke check, not a real-handwriting accuracy or general latency benchmark.
+- Manual requests can pin a validated `google_model` independently of the upload default. The review dropdown includes Flash-Lite, and Workspace settings offers it as a model suggestion. Both require the existing key and consent checks. No provider/model fallback or automatic cloud retry was added.
+- Validation: **66 backend tests passed**, focused Ruff and diff checks passed, TypeScript/Vite build passed, and isolated browser checks covered both model choices, request payloads, consent gating, settings synchronization, and desktop/mobile layout. The development backend is restarted separately after confirming it is idle; no installer rebuild is included.
+- [Google's Flash-Lite model documentation](https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite) confirms image input and structured output support. Live billing behavior and representative handwriting accuracy remain unproven.

@@ -1,6 +1,7 @@
 """Optional Gemini REST transport; no key or historical examples enter receipt records."""
 
 import asyncio
+import copy
 import json
 import re
 
@@ -43,6 +44,7 @@ class GoogleVisionEngine(VisionEngine):
                             403: "Google denied access. Check the API key's permissions, project, and regional availability.",
                             404: "This Gemini model is unavailable. Choose an available image-capable Gemini model in Settings.",
                             429: "Google quota or rate limit reached. Check AI Studio quota/billing and retry later.",
+                            503: "Google model is busy or temporarily unavailable. Retry manually later, or choose Gemini 3.5 Flash-Lite.",
                         }
                         raise VisionError(messages.get(response.status_code,
                             "Google vision is unavailable. Try again later or select local Qwen in Settings."))
@@ -74,11 +76,14 @@ class GoogleVisionEngine(VisionEngine):
         _cancelled(stop)
         require_google_enabled(self.root)
         system, user = payload["messages"]
+        schema = copy.deepcopy(payload["format"])
+        # Google's schema compiler rejects the 1,000-row bound; local validation retains it.
+        schema["properties"]["items"].pop("maxItems", None)
         request = {
             "systemInstruction": {"parts": [{"text": system["content"]}]},
             "contents": [{"role": "user", "parts": [{"text": user["content"]}] + [
                 {"inlineData": {"mimeType": "image/jpeg", "data": data}} for data in user["images"]]}],
-            "generationConfig": {"responseMimeType": "application/json", "responseJsonSchema": payload["format"],
+            "generationConfig": {"responseMimeType": "application/json", "responseJsonSchema": schema,
                                  "maxOutputTokens": 16384},
         }
         body = json.dumps(request, ensure_ascii=False).encode("utf-8")
@@ -86,8 +91,11 @@ class GoogleVisionEngine(VisionEngine):
             raise VisionError("Selected pages exceed the Google request limit. Choose fewer pages or a smaller region.")
         try:
             raw = asyncio.run(self._request(model, body, stop))
+        except httpx.ConnectTimeout:
+            raise VisionError("Connection to Google vision timed out. Check your internet connection and retry manually.") from None
         except (TimeoutError, httpx.TimeoutException):
-            raise VisionError("Google vision timed out. Check your connection and retry, or select local Qwen.") from None
+            raise VisionError("Google vision response timed out. Retry manually or choose another Gemini model, "
+                              "such as Gemini 3.5 Flash-Lite.") from None
         except httpx.HTTPError:
             # Never propagate provider bodies or request objects containing the key to logs/API errors.
             raise VisionError("Cannot reach Google vision. Check your internet connection or select local Qwen.") from None
