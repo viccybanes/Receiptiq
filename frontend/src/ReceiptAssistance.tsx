@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Check, Crop, ExternalLink, LoaderCircle, ScanText, Search, Square, UserRound } from 'lucide-react'
 import { api, post } from './api'
 import type { Example, Receipt, ReceiptData } from './types'
 import './assistance.css'
 
 type Props = { receipt: Receipt; draft: ReceiptData; pageId: string | undefined; crop: number[] | null
+  readingActions: HTMLDivElement | null
   onSelectRegion: () => void; saveDraft: () => Promise<void>; onReceipt: (result: Receipt) => void
   onApplied: (result: Receipt) => void; onChange: (next: ReceiptData) => void; onBusy: (value: boolean) => void
   onError: (message: string) => void; onOpenReceipt: (id: string) => void }
@@ -33,7 +35,7 @@ function differences(current: ReceiptData, proposed: ReceiptData): Difference[] 
 }
 
 export default function ReceiptAssistance({ receipt, draft, pageId, crop, onSelectRegion, saveDraft,
-  onReceipt, onApplied, onChange, onBusy, onError, onOpenReceipt }: Props) {
+  onReceipt, onApplied, onChange, onBusy, onError, onOpenReceipt, readingActions }: Props) {
   const [model, setModel] = useState('qwen3-vl:2b-instruct')
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
@@ -129,6 +131,12 @@ export default function ReceiptAssistance({ receipt, draft, pageId, crop, onSele
   }
 
   return <section className="receipt-assistance" aria-label="Receipt assistance">
+    {readingActions && createPortal(<>
+      <button type="button" disabled={!pageId || !!busy || activeJob} onClick={() => requestVision(null)}>
+        {busy === 'vision' ? <LoaderCircle size={15} className="spin" /> : <ScanText size={15} />}Use vision</button>
+      <button type="button" className="primary" disabled={!candidate || !!busy || stale || activeJob || candidate.auto_applied} onClick={applyCandidate}>
+        {busy === 'apply' ? <LoaderCircle size={15} className="spin" /> : <Check size={15} />}Apply vision</button>
+    </>, readingActions)}
     <div className="assistance-heading"><ScanText size={17} /><h3>Read with {googleVision ? 'Google' : 'local'} vision</h3></div>
     <p className="assistance-help">{needsHelp ? 'Some fields need a closer look. Read this page or select a region to compare another suggestion.' :
       'Ask the selected model for another reading of the selected page or a specific region.'}</p>
@@ -136,8 +144,7 @@ export default function ReceiptAssistance({ receipt, draft, pageId, crop, onSele
       {googleVision ? <p className="assistance-help">Google · {receipt.vision_settings?.google_model}</p> :
         <label><span>Vision model</span><select value={model} disabled={!!busy || activeJob} onChange={event => setModel(event.target.value)}>
           <option value="qwen3-vl:2b-instruct">Qwen3-VL 2B · lighter</option><option value="qwen3-vl:4b-instruct">Qwen3-VL 4B · larger</option></select></label>}
-      <div className="assistance-actions"><button type="button" disabled={!pageId || !!busy || activeJob} onClick={() => requestVision(null)}>
-        {busy === 'vision' ? <LoaderCircle size={15} className="spin" /> : <ScanText size={15} />}Use vision</button>
+      <div className="assistance-actions">
         <button type="button" disabled={!pageId || !!busy || activeJob} onClick={onSelectRegion}><Crop size={15} />Select region</button>
         <button type="button" disabled={!pageId || !crop || !!busy || activeJob} onClick={() => requestVision(crop)}>
           {busy === 'region' ? <LoaderCircle size={15} className="spin" /> : <ScanText size={15} />}Read this region again</button></div>
@@ -161,8 +168,6 @@ export default function ReceiptAssistance({ receipt, draft, pageId, crop, onSele
         <p className="assistance-help">No visible differences from the current expense values.</p>}
       {stale && !candidate.auto_applied && <p className="assistance-stale">This suggestion is from an earlier saved revision. Run vision again to compare current values.</p>}
       {candidate.auto_applied && <p className="assistance-message">Vision applied automatically. Check the fields before verifying.</p>}
-      <button type="button" className="primary" disabled={!!busy || stale || activeJob || candidate.auto_applied} onClick={applyCandidate}>
-        {busy === 'apply' ? <LoaderCircle size={15} className="spin" /> : <Check size={15} />}Apply vision suggestion</button>
     </details>}
     <details className="assistance-examples">
       <summary>Similar saved receipts</summary><p className="assistance-help">Use wording from verified receipts that were explicitly shared with local examples. Historical prices are never copied.</p>

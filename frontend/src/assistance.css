@@ -8,6 +8,7 @@
 .assistance-vision-controls label > span, .assistance-item-wording label > span, .assistance-assignment-fields label > span { font-size: 11px; font-weight: 600; }
 .assistance-vision-controls select, .assistance-item-wording select { width: 100%; font-size: 11px; min-height: 35px; }
 .assistance-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+.reading-actions { display: flex; flex-wrap: wrap; gap: 7px; }
 .assistance-region-note { color: var(--green-deep); margin: 9px 0; font-size: 11px; }
 .assistance-job { padding: 10px 12px; margin: 12px 0; border: 1px solid var(--line); border-radius: 5px; background: var(--wash); font-size: 11px; }
 .assistance-job > div { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }

@@ -42,6 +42,7 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
   const saving = useRef<Promise<void> | null>(null)
   const [saveState, setSaveState] = useState('Saved locally')
   const [page, setPage] = useState(0)
+  const [readingActions, setReadingActions] = useState<HTMLDivElement | null>(null)
   const [variant, setVariant] = useState('processed')
   const [image, setImage] = useState('')
   const [zoom, setZoom] = useState(100)
@@ -420,7 +421,7 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
       <div className="page-bar"><button aria-label="Previous page" disabled={page === 0} onClick={() => setPage(page - 1)}><ChevronLeft size={15} /></button>
         <span>Page {receipt.pages.length ? page + 1 : 0} of {receipt.pages.length}</span>
         <button aria-label="Next page" disabled={page + 1 >= receipt.pages.length} onClick={() => setPage(page + 1)}><ChevronRight size={15} /></button></div>
-      <button disabled={pending || busy || photosBusy} onClick={async () => {
+      <div className="reading-actions" ref={setReadingActions}><button disabled={pending || busy || photosBusy} onClick={async () => {
         setBusy(true)
         try {
           await saveBeforeLeave.current?.()
@@ -428,7 +429,7 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
           await load(); onChanged()
         } catch (e) { onError((e as Error).message) }
         finally { setBusy(false) }
-      }}>Run OCR</button>
+      }}>Run OCR</button></div>
       <details className="ocr-evidence"><summary>Recognized text · {receipt.evidence.lines.length} regions</summary>
         <p>OCR scores describe recognition, not verified accuracy. Select a region to inspect its source.</p>
         {receipt.evidence.lines.map(line => <button key={line.id} className="ocr-line" onClick={() => {
@@ -459,6 +460,7 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
         }}>Create grouped receipts</button>
       </details>}
       <ReceiptAssistance receipt={receipt} draft={draft} pageId={directPhoto ? undefined : currentPage?.id} crop={crop}
+        readingActions={readingActions}
         onSelectRegion={() => { setSelecting(value => !value); setVariant('processed') }}
         saveDraft={async () => { await saveBeforeLeave.current?.() }}
         onReceipt={result => { setReceipt(result); onChanged() }}
