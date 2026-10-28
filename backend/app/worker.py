@@ -7,13 +7,14 @@ import time
 
 from .db import Store, now, uid
 from .extraction import parse
+from .google_vision import GoogleVisionEngine
 from .imaging import pages, preprocess
 from .layout import layout_assistance_enabled
 from .models import ReceiptData
 from .ocr import PaddleEngine
 from .retrieval import Retrieval
 from .vision import ALLOWED_MODELS, DEFAULT_MODEL, MAX_VISION_PAGES, VisionEngine
-from .vision_settings import load_vision_settings
+from .vision_settings import load_vision_settings, require_google_enabled
 
 logger = logging.getLogger(__name__)
 MAX_VISION_ATTEMPTS = 3
@@ -76,7 +77,8 @@ class Worker:
             logger.exception("Receipt processing failed for job %s", job["id"])
             message = str(exc)[:1000] or "OCR failed. Open the receipt for manual entry or retry."
             with self.store.connect() as connection:
-                retry = job["kind"] == "vision" and job["attempts"] + 1 < MAX_VISION_ATTEMPTS
+                retry = (job["kind"] == "vision" and json.loads(job["payload_json"]).get("provider", "local") == "local"
+                         and job["attempts"] + 1 < MAX_VISION_ATTEMPTS)
                 stage = (f"Vision failed; retry {job['attempts'] + 1}/{MAX_VISION_ATTEMPTS - 1} after queue finishes"
                          if retry else "Processing failed; retry manually")
                 connection.execute("UPDATE jobs SET state=?,stage=?,error=?,updated_at=? "
@@ -100,21 +102,28 @@ class Worker:
             raise ValueError("Receipt page is unavailable. Run OCR or import its image first.")
         if self.cancelled(job):
             return
-        examples = self.retrieval.search(receipt["id"])
-        self.store.execute("UPDATE jobs SET stage='Reading with local vision',progress=20 WHERE id=?", (job["id"],))
+        provider = payload.get("provider", "local")
+        if provider not in ("local", "google"):
+            raise ValueError("Unknown vision provider. Request a new scan from Settings.")
+        if provider == "google":
+            require_google_enabled(self.store.root)
+        engine = GoogleVisionEngine(self.store.root) if provider == "google" else self.vision
+        examples = [] if provider == "google" else self.retrieval.search(receipt["id"])
+        stage = "Reading with Google vision" if provider == "google" else "Reading with local vision"
+        self.store.execute("UPDATE jobs SET stage=?,progress=20 WHERE id=?", (stage, job["id"]))
         selected_pages = self.store.read("SELECT * FROM document_pages WHERE receipt_id=? ORDER BY page_number",
                                          (receipt["id"],)) if payload.get("auto_apply") else [page]
         image_paths = [self.store.file(row["processed_path"]) for row in selected_pages]
         if len(image_paths) > MAX_VISION_PAGES:
-            raise ValueError(f"Choose between 1 and {MAX_VISION_PAGES} receipt pages for local vision.")
+            raise ValueError(f"Choose between 1 and {MAX_VISION_PAGES} receipt pages for vision.")
         page_numbers = {row["page_number"]: index for index, row in enumerate(selected_pages)}
         lines = [{**line, "page": page_numbers[line["page"]]} for line in receipt["evidence"]["lines"]
                  if line["page"] in page_numbers]
-        options = load_vision_settings(self.store.root).model_dump()
+        options = load_vision_settings(self.store.root).model_dump(include={"amount_first", "capture_regions"})
         location_notice = ""
         ocr_started = time.monotonic()
         ocr_status = "existing" if lines else "not_requested"
-        if layout_assistance_enabled() or options["capture_regions"]:
+        if (provider == "local" and layout_assistance_enabled()) or options["capture_regions"]:
             missing_pages = [index for index in range(len(image_paths))
                              if not any(line["page"] == index for line in lines)]
             if missing_pages:
@@ -132,8 +141,8 @@ class Worker:
                 if self.cancelled(job):
                     return
         ocr_seconds = round(time.monotonic() - ocr_started, 3)
-        self.store.execute("UPDATE jobs SET stage='Reading with local vision' WHERE id=?", (job["id"],))
-        result = self.vision.extract(image_paths, lines, examples=examples,
+        self.store.execute("UPDATE jobs SET stage=? WHERE id=?", (stage, job["id"]))
+        result = engine.extract(image_paths, lines, examples=examples,
                                      **options,
                                      crop=payload.get("crop"), model=payload["model"],
                                      current=receipt["data"], stop=lambda: self.cancelled(job),
@@ -173,7 +182,8 @@ class Worker:
             elif payload.get("auto_apply"):
                 stage = "Vision suggestion ready; edits preserved"
             connection.execute("INSERT INTO extraction_runs VALUES(?,?,?,?,?)",
-                               (uid(), receipt["id"], "Ollama / " + result["model"], json.dumps(result), now()))
+                               (uid(), receipt["id"], ("Google / " if provider == "google" else "Ollama / ") + result["model"],
+                                json.dumps(result), now()))
             connection.execute("UPDATE jobs SET state='done',stage=?,progress=100,"
                                "error=NULL,updated_at=? WHERE id=?", (stage, now(), job["id"]))
 
@@ -265,7 +275,8 @@ class Worker:
                 revision = connection.execute("SELECT revision FROM receipts WHERE id=?", (receipt["id"],)).fetchone()["revision"]
                 # A manual edit during preview preparation must also prevent automatic application.
                 auto_revision = revision if not current["manually_edited"] else -1
-                payload = {"page_id": first_page["id"], "model": model, "revision": auto_revision, "auto_apply": True}
+                selection = json.loads(job["payload_json"]).get("vision") or {"provider": "local", "model": model}
+                payload = {"page_id": first_page["id"], **selection, "revision": auto_revision, "auto_apply": True}
                 connection.execute("INSERT INTO jobs(id,receipt_id,batch_id,state,stage,created_at,updated_at,kind,payload_json) "
                                    "VALUES(?,?,?,?,?,?,?,?,?)", (uid(), receipt["id"], job["batch_id"], "queued",
-                                   "Waiting for local vision", now(), now(), "vision", json.dumps(payload)))
+                                   "Waiting for vision", now(), now(), "vision", json.dumps(payload)))

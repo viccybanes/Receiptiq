@@ -15,7 +15,8 @@ export type Example = { receipt_id: string; revision: number; vendor: string; sc
   items: { id: string; description: string; unit: string; item_type: string }[];
   corrections: { field: string; before: string; after: string }[] }
 export type Line = { id: string; text: string; page: number; score: number; box: number[] }
-export type VisionSettings = { amount_first: boolean; capture_regions: boolean }
+export type VisionSettings = { amount_first: boolean; capture_regions: boolean; provider: 'local' | 'google';
+  google_model: string; google_consent: boolean; google_key_saved: boolean }
 export type SourceRegion = { item_id: string; item_index: number; page_id: string; box: number[] }
 export type Receipt = Summary & {
   data: ReceiptData; field_meta: Record<string, { source: string; line_ids: string[];

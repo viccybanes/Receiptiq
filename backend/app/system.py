@@ -419,7 +419,7 @@ def _location_files(source):
                 files.append(path)
             if len(files) > 100_000:
                 raise ValueError("Workspace location changes support up to 100,000 files.")
-    for name in ("settings.json", "setup-profile.json", "setup-job.json"):
+    for name in ("settings.json", "setup-profile.json", "setup-job.json", "google-api-key.dpapi"):
         path = source / name
         if path.is_file():
             if path.is_symlink() or path.resolve() != path.absolute():

@@ -305,6 +305,8 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
   async function toggleOverlay(checked: boolean) {
     const previous = receipt?.vision_settings
     setReceipt(value => value ? { ...value, vision_settings: {
+      provider: 'local', google_model: 'gemini-3.8-flash', google_consent: false, google_key_saved: false,
+      ...value.vision_settings,
       amount_first: value.vision_settings?.amount_first || false, capture_regions: checked,
     } } : value)
     setOverlayBusy(true)
@@ -339,16 +341,16 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
         }}>Reset view</button>
         <button aria-label="Rotate preview clockwise" title="Rotate preview 90 degrees without rerunning OCR"
           disabled={!image}
+          onClick={rotatePreview}><RotateCw size={16} /> Rotate</button>
+        <button aria-label="Delete receipt" title={pending ? 'Wait for processing to finish before deleting' : 'Delete this receipt'}
+          disabled={pending || busy || photosBusy} onClick={() => void deleteReceipt()}><Trash2 size={16} /> Delete</button>
+      </div>
       <div className="vision-overlay-controls">
         <label><input type="checkbox" checked={showOverlay} disabled={overlayBusy}
           onChange={event => void toggleOverlay(event.target.checked)} /> Show AI line numbers</label>
         {showOverlay && <p>{!overlay.length ? 'Run Vision again to locate the item rows.' :
           overlay.some(region => region.suggested) ? 'Suggested lines. Apply vision to place them in the receipt details.' :
           'Numbers match the receipt detail lines. Check the image before verifying.'}</p>}
-      </div>
-          onClick={rotatePreview}><RotateCw size={16} /> Rotate</button>
-        <button aria-label="Delete receipt" title={pending ? 'Wait for processing to finish before deleting' : 'Delete this receipt'}
-          disabled={pending || busy || photosBusy} onClick={() => void deleteReceipt()}><Trash2 size={16} /> Delete</button>
       </div>
       <div ref={imageStage} className={'image-stage' + (image && !selecting ? ' pannable' : '') + (panning ? ' panning' : '')}
         tabIndex={0} role="region" aria-label="Receipt preview: zoom then drag to pan, or use arrow keys"
@@ -372,6 +374,8 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
         {image ? <div className="receipt-image" style={{ width: zoom + '%',
           aspectRatio: viewRotation % 180 ? imageSize[1] / imageSize[0] : imageSize[0] / imageSize[1] }}>
           <div style={{ position: 'absolute', left: '50%', top: '50%',
+            width: (viewRotation % 180 ? imageSize[0] / imageSize[1] * 100 : 100) + '%',
+            transform: `translate(-50%, -50%) rotate(${viewRotation}deg)` }}>
           {showOverlay && !directPhoto && currentPage && variant === 'processed' && overlay.length > 0 &&
             <svg className="vision-row-overlay" viewBox="0 0 1000 1000" preserveAspectRatio="none"
               role="img" aria-label="AI detected item rows">
@@ -381,8 +385,6 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
                 <text x={region.box[0] * 1000 + 5} y={region.box[1] * 1000 + 21}>{region.line}</text>
               </g>)}
             </svg>}
-            width: (viewRotation % 180 ? imageSize[0] / imageSize[1] * 100 : 100) + '%',
-            transform: `translate(-50%, -50%) rotate(${viewRotation}deg)` }}>
           <img src={image} draggable={false} alt={'Receipt page ' + (page + 1)}
             onLoad={event => setImageSize([event.currentTarget.naturalWidth, event.currentTarget.naturalHeight])} />
           {!directPhoto && currentPage && variant === 'processed' && highlighted.length > 0 && <svg className="evidence-overlay" viewBox={'0 0 ' + currentPage.width + ' ' + currentPage.height}

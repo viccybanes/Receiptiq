@@ -1,4 +1,4 @@
-"""Bounded, local-only vision suggestions. This adapter never writes receipt data."""
+"""Bounded vision suggestions and shared validation. This adapter never writes receipt data."""
 
 import base64
 import copy
@@ -240,7 +240,7 @@ def _parse_receipt(content, incomplete=False):
             raise ValueError("No recoverable fields")
         return candidate, True
     except (ValueError, TypeError) as exc:
-        raise _MalformedReply("Local vision returned malformed receipt data with no usable fields. "
+        raise _MalformedReply("Vision returned malformed receipt data with no usable fields. "
                               "Retry a smaller region or enter the values manually.") from exc
 
 
@@ -260,12 +260,12 @@ def _crop_rect(crop):
 
 def _cancelled(stop):
     if stop is not None and (stop() if callable(stop) else stop.is_set()):
-        raise VisionError("Local vision was cancelled. The current receipt values were preserved.")
+        raise VisionError("Vision was cancelled. The current receipt values were preserved.")
 
 
 def _images(paths, crop):
     if not 1 <= len(paths) <= MAX_VISION_PAGES:
-        raise VisionError(f"Choose between 1 and {MAX_VISION_PAGES} receipt pages for local vision.")
+        raise VisionError(f"Choose between 1 and {MAX_VISION_PAGES} receipt pages for vision.")
     if crop is not None and len(paths) != 1:
         raise VisionError("Choose one page before reading a region again.")
     encoded = []
@@ -780,6 +780,9 @@ class _VisionResponse(http.client.HTTPResponse):
 
 
 class VisionEngine:
+    provider = "local"
+    source = "local_vision"
+
     def __init__(self, port=None, timeout=None):
         try:
             value = os.environ.get("RECEIPTIQ_OLLAMA_PORT", "11435") if port is None else port
@@ -844,12 +847,12 @@ class VisionEngine:
     def extract(self, pages, ocr_lines, examples=(), crop=None, model=DEFAULT_MODEL, current=None, stop=None,
                 preserve_items=False, amount_first=False, capture_regions=False):
         started = time.monotonic()
-        if model not in ALLOWED_MODELS:
+        if self.provider == "local" and model not in ALLOWED_MODELS:
             raise VisionError("Choose the local Qwen3-VL 2B or 4B instruct model in Vision setup.")
         _cancelled(stop)
         crop = _crop_rect(crop)
         images, dimensions = _images(pages, crop)
-        layout_enabled = layout_assistance_enabled()
+        layout_enabled = self.provider == "local" and layout_assistance_enabled()
         bands = (detail_bands(_selected_ocr_lines(ocr_lines, None, dimensions), dimensions)
                  if layout_enabled and crop is None else [])
         # Dense uncertain OCR is useful for locating sections, but its garbled text
@@ -858,7 +861,7 @@ class VisionEngine:
         prompt_lines, context_line_count = (_compact_ocr_context(entries) if layout_enabled else (entries, len(entries)))
         context = {"task": "Extract visible receipt values for a human to review.",
                    "ocr_lines": prompt_lines,
-                   "historical_examples": _example_context(examples)}
+                   "historical_examples": _example_context(examples) if self.provider == "local" else []}
         context_truncated = layout_enabled and not bands and (
             context_line_count < len(_selected_ocr_lines(ocr_lines, crop, dimensions)) or
             any(len(line["text"]) > 2000 for line in _selected_ocr_lines(ocr_lines, crop, dimensions)))
@@ -1043,7 +1046,7 @@ class VisionEngine:
                            crop[0] + box[2] * (crop[2] - crop[0]), crop[1] + box[3] * (crop[3] - crop[1])]
                 index = next(i for i, item in enumerate(draft["items"]) if item["id"] == item_id)
                 regions.append({"item_id": item_id, "item_index": index, "page_index": proposed.source_page, "box": box})
-        notices = ["Local vision suggestions require human verification. "
+        notices = ["Vision suggestions require human verification. "
                    "Uncertain values stay blank or keep the current value. Missing units default to 'unit'."]
         if partial_response:
             notices.append("Recovered partial vision data from malformed or incomplete output. "
@@ -1077,7 +1080,7 @@ class VisionEngine:
         # Arithmetic is checked in Python, never entrusted to the model's prose.
         notices.extend(issue["message"] for issue in validate(draft)
                        if issue["field"] == "item_sum" or issue["field"].endswith(".arithmetic"))
-        provenance = {"source": "local_vision", "model": model, "page_count": len(pages), "crop": crop,
+        provenance = {"source": self.source, "provider": self.provider, "model": model, "page_count": len(pages), "crop": crop,
                       "historical_examples": len(context["historical_examples"]), "row_rechecks": attempt,
                       "partial_response": partial_response, "layout_assistance": layout_enabled,
                       "ocr_context_lines": context_line_count, "ocr_context_truncated": context_truncated,

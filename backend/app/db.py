@@ -210,12 +210,13 @@ class Store:
                 "SELECT id,page_number,width,height,transform_json FROM document_pages WHERE receipt_id=? "
                 "ORDER BY page_number", (receipt_id,))
             run = one("SELECT result_json FROM extraction_runs WHERE receipt_id=? AND engine NOT LIKE 'Ollama%' "
+                      "AND engine NOT LIKE 'Google%' "
                       "ORDER BY created_at DESC LIMIT 1", (receipt_id,))
             receipt["evidence"] = json.loads(run["result_json"]) if run else {"lines": []}
             if "draft" in receipt["evidence"]:
                 receipt["evidence"]["draft"] = ReceiptData.model_validate(receipt["evidence"]["draft"]).model_dump()
             candidate = one("SELECT id,result_json,created_at FROM extraction_runs WHERE receipt_id=? "
-                            "AND engine LIKE 'Ollama%' ORDER BY created_at DESC LIMIT 1", (receipt_id,))
+                            "AND (engine LIKE 'Ollama%' OR engine LIKE 'Google%') ORDER BY created_at DESC LIMIT 1", (receipt_id,))
             receipt["candidate"] = ({**json.loads(candidate["result_json"]), "id": candidate["id"],
                                       "created_at": candidate["created_at"]} if candidate else None)
             receipt["vision_job"] = one(

@@ -15,6 +15,7 @@ dependencies = [
   # PaddleX 3.0 eagerly imports legacy LangChain modules even in its OCR pipeline.
   "langchain==0.3.25", "langchain-community==0.3.24", "langchain-openai==0.3.18",
   "langchain-core==0.3.63", "openai==1.82.1", "filelock==3.18.0",
+  "httpx==0.28.1",
 ]
 
 [project.optional-dependencies]

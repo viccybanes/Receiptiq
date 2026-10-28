@@ -146,10 +146,12 @@ def test_settings_persist_validate_and_keep_other_workspace_preferences(tmp_path
     with TestClient(app, base_url='http://127.0.0.1:8765') as client:
         client.headers['Authorization'] = 'Bearer ' + client.get('/api/v1/session').json()['token']
         (tmp_path / 'settings.json').write_text(json.dumps({'unrelated': {'keep': True}}))
-        assert client.get('/api/v1/vision/settings').json() == {'amount_first': False, 'capture_regions': False}
+        defaults = {'amount_first': False, 'capture_regions': False, 'provider': 'local',
+                    'google_model': 'gemini-3.8-flash', 'google_consent': False, 'google_key_saved': False}
+        assert client.get('/api/v1/vision/settings').json() == defaults
         assert client.patch('/api/v1/vision/settings', json={'amount_first': True}).status_code == 200
         result = client.patch('/api/v1/vision/settings', json={'capture_regions': True})
-        assert result.json() == {'amount_first': True, 'capture_regions': True}
+        assert result.json() == {**defaults, 'amount_first': True, 'capture_regions': True}
         assert load_vision_settings(tmp_path).amount_first is True
         assert json.loads((tmp_path / 'settings.json').read_text())['unrelated'] == {'keep': True}
         for invalid in ({'amount_first': 'false'}, {'capture_regions': 1}, {'unknown': True}):

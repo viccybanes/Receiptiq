@@ -28,7 +28,7 @@ const PROFILES: { id: Profile; name: string; detail: string }[] = [
   { id: '4b', name: '4B vision', detail: 'A larger local vision model that needs more memory and disk space. Processing may take longer.' },
 ]
 const TABS: { id: Tab; name: string; icon: typeof Cpu }[] = [
-  { id: 'models', name: 'Local models', icon: Cpu }, { id: 'formats', name: 'CSV formats', icon: FileSpreadsheet },
+  { id: 'models', name: 'Vision & models', icon: Cpu }, { id: 'formats', name: 'CSV formats', icon: FileSpreadsheet },
   { id: 'backups', name: 'Backups', icon: Archive },
 ]
 function size(bytes: number) {
@@ -44,6 +44,11 @@ export default function WorkspaceSettings({ onClose, onTemplatesChanged }: Props
   const [visionSettings, setVisionSettings] = useState<VisionSettings | null>(null)
   const [visionSaving, setVisionSaving] = useState(false)
   const [visionMessage, setVisionMessage] = useState('')
+  const [provider, setProvider] = useState<'local' | 'google'>('local')
+  const [googleModel, setGoogleModel] = useState('gemini-3.8-flash')
+  const [cloudConsent, setCloudConsent] = useState(false)
+  const [apiKey, setApiKey] = useState('')
+  const [providerMessage, setProviderMessage] = useState('')
   const [loading, setLoading] = useState(true)
   const [installing, setInstalling] = useState(false)
   const [error, setError] = useState('')
@@ -80,10 +85,41 @@ export default function WorkspaceSettings({ onClose, onTemplatesChanged }: Props
   }, [])
   useEffect(() => { void loadSetup() }, [loadSetup])
   useEffect(() => {
-    void api<VisionSettings>('/vision/settings').then(setVisionSettings).catch(cause => setError((cause as Error).message))
+    void api<VisionSettings>('/vision/settings').then(saved => {
+      setVisionSettings(saved); setProvider(saved.provider || 'local')
+      setGoogleModel(saved.google_model || 'gemini-3.8-flash'); setCloudConsent(!!saved.google_consent)
+    }).catch(cause => setError((cause as Error).message))
   }, [])
 
-  async function changeVision(key: keyof VisionSettings, checked: boolean) {
+  function acceptSettings(saved: VisionSettings) {
+    setVisionSettings(saved)
+    window.dispatchEvent(new CustomEvent('receiptiq:vision-settings', { detail: saved }))
+  }
+  async function saveProvider() {
+    setVisionSaving(true); setError(''); setProviderMessage('')
+    try {
+      const saved = await api<VisionSettings>('/vision/settings', { method: 'PATCH', body: JSON.stringify({
+        provider, google_model: googleModel.trim(), google_consent: provider === 'google' && cloudConsent,
+      }) })
+      acceptSettings(saved); setCloudConsent(saved.google_consent)
+      setProviderMessage(saved.provider === 'google' ? 'Google enabled for new uploads and manual scans.' :
+        'Local Qwen selected. Queued Google scans will stop; request them again to use Qwen.')
+    } catch (cause) { setError((cause as Error).message) }
+    finally { setVisionSaving(false) }
+  }
+  async function changeGoogleKey(remove = false) {
+    setVisionSaving(true); setError(''); setProviderMessage('')
+    try {
+      const saved = await api<VisionSettings>('/vision/google-key', { method: remove ? 'DELETE' : 'PUT',
+        ...(remove ? {} : { body: JSON.stringify({ api_key: apiKey }) }),
+      })
+      acceptSettings(saved); setApiKey('')
+      if (remove) { setProvider('local'); setCloudConsent(false) }
+      setProviderMessage(remove ? 'Key removed. Local Qwen is selected.' : 'Key saved securely on this PC. Save the provider to enable Google.')
+    } catch (cause) { setError((cause as Error).message) }
+    finally { setVisionSaving(false) }
+  }
+  async function changeVision(key: 'amount_first' | 'capture_regions', checked: boolean) {
     const previous = visionSettings
     setVisionSettings(value => value ? { ...value, [key]: checked } : value)
     setVisionSaving(true); setVisionMessage(''); setError('')
@@ -91,8 +127,7 @@ export default function WorkspaceSettings({ onClose, onTemplatesChanged }: Props
       const saved = await api<VisionSettings>('/vision/settings', {
         method: 'PATCH', body: JSON.stringify({ [key]: checked }),
       })
-      setVisionSettings(saved)
-      window.dispatchEvent(new CustomEvent('receiptiq:vision-settings', { detail: saved }))
+      acceptSettings(saved)
       setVisionMessage('Saved. These options apply to the next Vision run.')
     } catch (cause) { setVisionSettings(previous); setError((cause as Error).message) }
     finally { setVisionSaving(false) }
@@ -178,7 +213,7 @@ export default function WorkspaceSettings({ onClose, onTemplatesChanged }: Props
   return <dialog ref={dialog} className="settings-dialog" aria-labelledby="settings-title"
     onCancel={event => { event.preventDefault(); onClose() }}>
     <div className="settings-dialog-heading"><div><h2 id="settings-title">Workspace settings</h2>
-      <p>Local processing, export formats, and recovery.</p></div>
+      <p>Vision provider, local models, export formats, and recovery.</p></div>
       <button type="button" className="icon-button" aria-label="Close workspace settings" onClick={onClose}><X size={20} /></button></div>
     <div className="settings-tabs" role="tablist" aria-label="Workspace settings sections">{TABS.map((entry, index) => {
       const Icon = entry.icon
@@ -193,8 +228,43 @@ export default function WorkspaceSettings({ onClose, onTemplatesChanged }: Props
     <div className="settings-dialog-content">
       {error && <div className="notice error" role="alert">{error}</div>}
       <section id="settings-panel-models" className="settings-panel" role="tabpanel" aria-labelledby="settings-tab-models" hidden={tab !== 'models'}>
+        <fieldset className="settings-plain-fieldset settings-vision-provider" disabled={!visionSettings || visionSaving}>
+          <legend>Receipt vision provider</legend>
+          <p className="settings-muted">Choose how new uploads and manual scans are read. Every result still needs your verification.</p>
+          <label className="settings-field"><span>Vision provider</span><select value={provider} aria-label="Vision provider"
+            onChange={event => { setProvider(event.target.value as 'local' | 'google'); setProviderMessage('') }}>
+            <option value="local">Local Qwen · offline</option><option value="google">Google AI Studio · your API key</option>
+          </select></label>
+          {provider === 'google' && <div className="settings-google">
+            <p>Google receives the selected receipt images and their OCR text, including automatic scans of new uploads.
+              Internet is required. Requests use your Google quota and may incur charges. Saved retrieval examples stay local.</p>
+            <p><a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">Get an AI Studio API key</a>
+              {' · '}<a href="https://ai.google.dev/gemini-api/terms" target="_blank" rel="noreferrer">Google API data terms</a></p>
+            <label className="settings-field"><span>Google API key</span><input type="password" value={apiKey}
+              autoComplete="new-password" spellCheck={false} maxLength={256}
+              placeholder={visionSettings?.google_key_saved ? 'Key saved · enter a replacement' : 'Paste your AI Studio key'}
+              onChange={event => setApiKey(event.target.value)} /></label>
+            <div className="settings-key-actions">
+              <button type="button" disabled={!apiKey.trim()} onClick={() => void changeGoogleKey()}>Save API key</button>
+              {visionSettings?.google_key_saved && <button type="button" onClick={() => void changeGoogleKey(true)}>Remove API key</button>}
+              <span className="settings-muted">{visionSettings?.google_key_saved ? 'Key saved' : 'No key saved'}</span>
+            </div>
+            <p className="settings-muted">Protected for your Windows user. The key is never shown again or included in backups; re-enter it after restoring a backup.</p>
+            <label className="settings-field"><span>Gemini model</span><input value={googleModel} maxLength={100}
+              spellCheck={false} onChange={event => setGoogleModel(event.target.value)} aria-describedby="gemini-model-help" /></label>
+            <p id="gemini-model-help" className="settings-muted">Use an image-capable Gemini model with structured JSON support from your AI Studio project.</p>
+            <label className="settings-confirm"><input type="checkbox" checked={cloudConsent}
+              onChange={event => setCloudConsent(event.target.checked)} />
+              Allow receipt images and OCR text to be sent to Google for automatic uploads and manual scans.</label>
+          </div>}
+          {provider === 'local' && <p className="settings-muted">Qwen processes receipts on this PC using the installed local profile below.</p>}
+          <div className="settings-save-row"><span className="settings-muted">Active: {visionSettings?.provider === 'google' ? 'Google AI Studio' : 'Local Qwen'}</span>
+            <button type="button" className="primary" disabled={provider === 'google' && (!visionSettings?.google_key_saved || !cloudConsent || !googleModel.trim())}
+              onClick={() => void saveProvider()}>Save vision provider</button></div>
+          <p role="status" aria-live="polite">{visionSaving ? 'Saving…' : providerMessage}</p>
+        </fieldset>
         <div className="settings-section-heading"><div><h3>Set up local processing</h3>
-          <p>Downloads start only when you choose Install. Once setup finishes, receipt processing works offline.</p></div>
+          <p>Downloads start only when you choose Install. Local Qwen and OCR work offline after setup. Google vision does not need Qwen installed.</p></div>
           <button type="button" className="quiet" onClick={() => void loadSetup()} disabled={loading || setupBusy}><RefreshCw size={15} /> Reload status</button></div>
         {loading ? <p className="settings-loading" role="status"><LoaderCircle size={16} className="spin" /> Checking this PC…</p> : <>
           {capabilities && <div className="settings-hardware">

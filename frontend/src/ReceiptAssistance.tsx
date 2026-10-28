@@ -45,6 +45,7 @@ export default function ReceiptAssistance({ receipt, draft, pageId, crop, onSele
   const [assignee, setAssignee] = useState(receipt.assignee || '')
   const [secondReview, setSecondReview] = useState(!!receipt.second_review)
   const candidate = receipt.candidate
+  const googleVision = receipt.vision_settings?.provider === 'google'
   const job = receipt.vision_job
   const activeJob = !!job && ['queued', 'processing', 'running'].includes(job.state)
   const stale = !!candidate && candidate.base_revision !== receipt.revision
@@ -128,12 +129,13 @@ export default function ReceiptAssistance({ receipt, draft, pageId, crop, onSele
   }
 
   return <section className="receipt-assistance" aria-label="Receipt assistance">
-    <div className="assistance-heading"><ScanText size={17} /><h3>Read with local vision</h3></div>
+    <div className="assistance-heading"><ScanText size={17} /><h3>Read with {googleVision ? 'Google' : 'local'} vision</h3></div>
     <p className="assistance-help">{needsHelp ? 'Some fields need a closer look. Read this page or select a region to compare another suggestion.' :
-      'Ask the local model for another reading of the selected page or a specific region.'}</p>
+      'Ask the selected model for another reading of the selected page or a specific region.'}</p>
     <div className="assistance-vision-controls">
-      <label><span>Vision model</span><select value={model} disabled={!!busy || activeJob} onChange={event => setModel(event.target.value)}>
-        <option value="qwen3-vl:2b-instruct">Qwen3-VL 2B · lighter</option><option value="qwen3-vl:4b-instruct">Qwen3-VL 4B · larger</option></select></label>
+      {googleVision ? <p className="assistance-help">Google · {receipt.vision_settings?.google_model}</p> :
+        <label><span>Vision model</span><select value={model} disabled={!!busy || activeJob} onChange={event => setModel(event.target.value)}>
+          <option value="qwen3-vl:2b-instruct">Qwen3-VL 2B · lighter</option><option value="qwen3-vl:4b-instruct">Qwen3-VL 4B · larger</option></select></label>}
       <div className="assistance-actions"><button type="button" disabled={!pageId || !!busy || activeJob} onClick={() => requestVision(null)}>
         {busy === 'vision' ? <LoaderCircle size={15} className="spin" /> : <ScanText size={15} />}Use vision</button>
         <button type="button" disabled={!pageId || !!busy || activeJob} onClick={onSelectRegion}><Crop size={15} />Select region</button>
@@ -141,7 +143,8 @@ export default function ReceiptAssistance({ receipt, draft, pageId, crop, onSele
           {busy === 'region' ? <LoaderCircle size={15} className="spin" /> : <ScanText size={15} />}Read this region again</button></div>
     </div>
     {crop && <p className="assistance-region-note">Region selected. Read it again to get a focused suggestion.</p>}
-    <p className="assistance-help">Vision needs a downloaded local model in Workspace settings. Manual entry is always available. Suggestions require human verification.</p>
+    <p className="assistance-help">{googleVision ? 'These scans send receipt images and OCR text to Google using your saved API key.' :
+      'Local vision needs a downloaded model in Workspace settings.'} Manual entry is always available. Suggestions require human verification.</p>
     {job && <div className={'assistance-job ' + (job.state === 'failed' ? 'assistance-job-error' : '')} role="status">
       <div>{activeJob && <LoaderCircle size={14} className="spin" />}<strong>{job.stage || job.state}</strong>
         {activeJob && <button type="button" className="quiet" disabled={!!busy} onClick={cancelVision}><Square size={12} />Cancel vision</button>}</div>
@@ -150,7 +153,8 @@ export default function ReceiptAssistance({ receipt, draft, pageId, crop, onSele
     {error && <div className="notice error assistance-notice" role="alert">{error}</div>}
     {message && <p className="assistance-message" role="status">{message}</p>}
     {candidate && <details className="assistance-candidate" open>
-      <summary>Vision suggestion <span>{candidate.model.includes(':4b') ? 'Qwen3-VL 4B' : 'Qwen3-VL 2B'} · {candidate.seconds.toFixed(1)}s</span></summary>
+      <summary>Vision suggestion <span>{candidate.model.startsWith('gemini-') ? `Google · ${candidate.model}` :
+        candidate.model.includes(':4b') ? 'Qwen3-VL 4B' : 'Qwen3-VL 2B'} · {candidate.seconds.toFixed(1)}s</span></summary>
       <p className="assistance-help">{candidate.notice || 'Compare these values with the source. Applying still requires human verification.'}</p>
       {changes.length ? <>{renderChanges(changes.slice(0, 8))}{changes.length > 8 && <details className="assistance-more-changes">
         <summary>Show {changes.length - 8} more changes</summary>{renderChanges(changes.slice(8))}</details>}</> :

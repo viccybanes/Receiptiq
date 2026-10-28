@@ -18,3 +18,4 @@ artifacts/
 *.log
 *.tsbuildinfo
 .env
+google-api-key.dpapi*

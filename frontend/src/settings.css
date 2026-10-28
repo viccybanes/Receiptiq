@@ -55,6 +55,10 @@
 .settings-field select { padding-right: 26px; }
 .settings-field input:focus, .settings-field select:focus { border-color: var(--green); }
 .settings-field input[type=file] { padding: 6px; }
+.settings-vision-provider { padding-bottom: 24px; margin-bottom: 24px; border-bottom: 1px solid var(--line); }
+.settings-vision-provider > p, .settings-google > p { margin: 8px 0 14px; }
+.settings-vision-provider .settings-field { max-width: 520px; margin-top: 14px; }
+.settings-key-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-top: 9px; }
 .settings-form-section { padding-bottom: 22px; }
 .settings-columns { border-top: 1px solid var(--line); padding-top: 20px; }
 .settings-columns > p { margin-bottom: 12px; }

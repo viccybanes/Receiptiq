@@ -37,6 +37,7 @@ from .service import (
 from .system import ensure_runtime, stop_runtime
 from .templates import list_templates
 from .transfer import MAX_BUNDLE, add_photo, import_expenses
+from .vision_settings import selected_vision
 from .worker import Worker
 
 MAX_UPLOAD = 25 * 1024 * 1024
@@ -229,7 +230,8 @@ def create_app(root=None, *, start_worker=True, engine=None):
                     connection.execute("INSERT INTO jobs(id,receipt_id,batch_id,state,stage,created_at,updated_at,kind,payload_json) "
                                        "VALUES(?,?,?,?,?,?,?,?,?)",
                                        (job_id, receipt_id, batch_id, "queued", "Preparing preview", now(), now(),
-                                        "ocr" if auto_ocr else "preview", json.dumps({"auto_vision": not auto_ocr})))
+                                        "ocr" if auto_ocr else "preview", json.dumps({"auto_vision": not auto_ocr,
+                                            "vision": selected_vision(store.root) if not auto_ocr else None})))
                     connection.execute("UPDATE batch_files SET state='accepted',receipt_id=?,error=NULL WHERE id=?",
                                        (receipt_id, upload_id))
                 return {"id": receipt_id, "document_id": document_id, "job_id": job_id, "accepted": True}

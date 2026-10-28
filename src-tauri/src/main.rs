@@ -127,7 +127,8 @@ fn healthy(port: u16, token: &str) -> bool {
 }
 
 fn license_url_allowed(url: &str) -> bool {
-    url == "https://ai.google.dev/gemma/terms"
+    matches!(url, "https://ai.google.dev/gemma/terms" | "https://aistudio.google.com/apikey" |
+        "https://ai.google.dev/gemini-api/terms")
 }
 
 fn open_license_in_browser(url: &str) {
@@ -237,12 +238,16 @@ mod tests {
         assert!(super::license_url_allowed(
             "https://ai.google.dev/gemma/terms"
         ));
+        assert!(super::license_url_allowed("https://aistudio.google.com/apikey"));
+        assert!(super::license_url_allowed("https://ai.google.dev/gemini-api/terms"));
         for address in [
             "http://ai.google.dev/gemma/terms",
             "https://ai.google.dev.evil/gemma/terms",
             "https://ai.google.dev/gemma/terms?token=private",
             "file:///C:/Windows/System32/cmd.exe",
             "https://ai.google.dev/gemma/terms#unlisted",
+            "https://aistudio.google.com/apikey?key=private",
+            "https://aistudio.google.com.evil/apikey",
         ] {
             assert!(!super::license_url_allowed(address));
         }

@@ -1,17 +1,19 @@
-"""Local vision proposals, review handoff, setup, backups, and PDF grouping."""
+"""Vision proposals and providers, review handoff, setup, backups, and PDF grouping."""
 
 import hashlib
 import json
 from pathlib import Path
 
 import pypdfium2 as pdfium
-from fastapi import File, HTTPException, UploadFile
+from fastapi import File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
+from filelock import FileLock
 from starlette.concurrency import run_in_threadpool
 
 from .backups import MAX_ARCHIVE, create_backup, list_backups, stage_restore
 from .db import now, uid
 from .extraction import receipt_issues, reconcile
+from .google_key import KEY_FILE, save_google_key
 from .models import (
     LocationInput,
     ReviewOptions,
@@ -25,25 +27,63 @@ from .retrieval import Retrieval
 from .service import edit_receipt, require_mutable_receipt, require_receipt
 from .system import capabilities, setup_status, stage_location, start_setup
 from .templates import TemplateConflict, delete_template, get_template, save_template
-from .vision_settings import VisionSettings, load_vision_settings, save_vision_settings
+from .vision_settings import (
+    VisionSettings,
+    public_vision_settings,
+    require_google_enabled,
+    save_vision_settings,
+    selected_vision,
+)
 
 
 def view_receipt(store, receipt_id):
     result = require_receipt(store, receipt_id)
     result["issues"] = receipt_issues(result)
     result["reconciliation"] = reconcile(result["data"])
-    result["vision_settings"] = load_vision_settings(store.root).model_dump()
+    result["vision_settings"] = public_vision_settings(store.root)
     return result
 
 
 def install_routes(app, store, worker):
     @app.get("/api/v1/vision/settings")
     def vision_settings():
-        return load_vision_settings(store.root)
+        return public_vision_settings(store.root)
 
     @app.patch("/api/v1/vision/settings")
     def update_vision_settings(body: VisionSettings):
-        return save_vision_settings(store.root, body)
+        try:
+            return save_vision_settings(store.root, body)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.put("/api/v1/vision/google-key")
+    async def update_google_key(request: Request):
+        # Parse this write-only secret separately: validation responses must never echo its input.
+        try:
+            raw = bytearray()
+            async for chunk in request.stream():
+                raw.extend(chunk)
+                if len(raw) > 4096:
+                    raise ValueError()
+            body = json.loads(raw)
+            if not isinstance(body, dict) or set(body) != {"api_key"} or not isinstance(body["api_key"], str):
+                raise ValueError()
+        except (ValueError, UnicodeError):
+            raise HTTPException(422, "Enter a Google AI Studio API key.") from None
+        try:
+            # A restored backup can remember Google consent but deliberately has no key.
+            # Re-entering a missing key must not resume restored cloud jobs by itself.
+            if not (store.root / KEY_FILE).is_file():
+                save_vision_settings(store.root, VisionSettings(provider="local", google_consent=False))
+            with FileLock(str(store.root / "settings.lock"), timeout=5):
+                save_google_key(store.root, body["api_key"])
+            return public_vision_settings(store.root)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+
+    @app.delete("/api/v1/vision/google-key")
+    def delete_google_key():
+        return save_vision_settings(store.root, VisionSettings(provider="local", google_consent=False), clear_key=True)
 
     @app.get("/api/v1/system/capabilities")
     def hardware():
@@ -118,11 +158,17 @@ def install_routes(app, store, worker):
                                           "AND state IN ('queued','processing')", (receipt_id,)).fetchone()
             if existing:
                 return {"id": existing["id"], "accepted": True}
+            selection = selected_vision(store.root, body.model)
+            if selection["provider"] == "google":
+                try:
+                    require_google_enabled(store.root)
+                except ValueError as exc:
+                    raise HTTPException(409, str(exc)) from exc
             job_id = uid()
             connection.execute("INSERT INTO jobs(id,receipt_id,batch_id,state,stage,created_at,updated_at,"
                                "kind,payload_json) VALUES(?,?,?,?,?,?,?,?,?)",
-                               (job_id, receipt_id, receipt["batch_id"], "queued", "Waiting for local vision",
-                                now(), now(), "vision", body.model_dump_json()))
+                               (job_id, receipt_id, receipt["batch_id"], "queued", "Waiting for vision",
+                                now(), now(), "vision", json.dumps({**body.model_dump(), **selection})))
         return {"id": job_id, "accepted": True}
 
     @app.post("/api/v1/receipts/{receipt_id}/candidates/{candidate_id}/apply")
@@ -133,7 +179,7 @@ def install_routes(app, store, worker):
             connection.execute("BEGIN IMMEDIATE")
             receipt = require_mutable_receipt(store, receipt_id)
             candidate = connection.execute("SELECT result_json FROM extraction_runs WHERE id=? AND receipt_id=? "
-                                           "AND engine LIKE 'Ollama%'", (candidate_id, receipt_id)).fetchone()
+                                           "AND (engine LIKE 'Ollama%' OR engine LIKE 'Google%')", (candidate_id, receipt_id)).fetchone()
             if not candidate:
                 raise HTTPException(404, "Vision suggestion not found.")
             proposal = json.loads(candidate["result_json"])

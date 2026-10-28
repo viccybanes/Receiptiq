@@ -234,7 +234,7 @@ export default function App() {
         Receipt<span>IQ</span></a>
       <span className="header-divider" />
       <span className="workspace-name">Receipt workspace</span>
-      <span className="local-label"><ShieldCheck size={16} /> On this computer</span>
+      <span className="local-label"><ShieldCheck size={16} /> Records stored on this computer</span>
       <button className="quiet" disabled={!ready} onClick={async () => {
         try { await saveBeforeLeave.current?.(); setSettingsOpen(true) } catch (e) { setError((e as Error).message) }
       }}><Settings size={16} /> Settings</button>
@@ -260,7 +260,7 @@ export default function App() {
       <p className="import-help">Import one CSV with its referenced photos selected together, or one ZIP containing both.
         CSV alone stores image filenames; CSV + photos export includes the files.</p>
       {!modelsReady && <div className="notice warning"><FileText size={18} />
-        <span>OCR models aren’t installed. Open Settings → Local models to finish setup, then retry failed receipts.
+        <span>OCR models aren’t installed. Open Settings → Vision & models to set up local OCR if needed. Google vision can run without it.
           Manual entry remains available.</span></div>}
       <section className="batch-bar" aria-label="Batch controls">
         <FolderOpen size={19} />
@@ -339,7 +339,7 @@ export default function App() {
               })}
               {!visible.length && <p className="queue-empty">No receipts with this status.</p>}
             </div>
-            <div className="queue-footer"><ShieldCheck size={14} /> Originals and edits stay local.</div>
+            <div className="queue-footer"><ShieldCheck size={14} /> Originals and edits stored locally.</div>
           </div>
         </aside>
         {selected ? <Review key={selected} id={selected} saveBeforeLeave={saveBeforeLeave}

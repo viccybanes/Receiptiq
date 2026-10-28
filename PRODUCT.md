@@ -11,13 +11,13 @@ React, TypeScript, Python, FastAPI, SQLite, PaddleOCR; Tauri Windows host with a
 People who enter receipt data at work, reviewing tens of receipt images per session on Windows.
 
 ## Product Purpose
-Convert receipt images into verified structured records and CSV files while keeping receipt data local.
+Convert receipt images into verified structured records and CSV files stored locally. Local processing is the default; users may explicitly enable Google AI Studio vision with their own API key.
 
 ## Operating Context
 Users upload 20-100 images, review completed receipts while processing continues, correct fields, and export verified records. Single receipt per image is the initial assumption.
 
 ## Capabilities and Constraints
-CPU OCR, image preprocessing, PDFs, durable batches, manual review and revision history form the base workflow. Optional local vision proposes changes for explicit application. Retrieval uses only current verified records with explicit opt-in and never supplies historical prices as facts. Workplace CSV formats, photo bundles, local review assignment, PDF page grouping, backups/restore and Windows packaging extend that workflow. No paid or cloud AI services. The 0.4.0 installer is an unsigned preview; clean-machine and real handwritten-corpus validation remain release gates.
+CPU OCR, image preprocessing, PDFs, durable batches, manual review and revision history form the base workflow. Vision uses local Qwen or explicitly enabled Google AI Studio with a user-provided key. New uploads apply vision only while unchanged and unverified; manual scans remain suggestions. Retrieval uses only current verified records with explicit opt-in, stays local, and never supplies historical prices as facts. Workplace CSV formats, photo bundles, local review assignment, PDF page grouping, backups/restore and Windows packaging extend that workflow. Google sends current receipt images/OCR to the cloud and uses the user's quota/billing, with no automatic provider fallback. The 0.4.0 installer is an unsigned preview; clean-machine and real handwritten-corpus validation remain release gates.
 
 ## Brand Commitments
 Name: ReceiptIQ. No binding visual assets or aesthetic supplied. Independent application from the adjacent Frutiger Aero website.
