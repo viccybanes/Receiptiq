@@ -20,7 +20,7 @@ from app.vision import VisionError
 from app.vision_settings import VisionSettings, load_vision_settings, save_vision_settings
 
 client = client_fixture
-KEY = "synthetic-google-key-never-a-real-credential"
+KEY = "AQ.synthetic-google-key-never-a-real-credential"
 MODEL = "gemini-3.8-flash"
 RECEIPT = {"supplier": "GOOGLE SAMPLE", "receipt_number": "0001 / 0002", "receipt_date": "2026-10-28",
            "currency": "PHP", "total": "100.00", "visible_item_count": 1,
@@ -70,6 +70,30 @@ def scan(client, receipt):
         'revision': receipt['revision'], 'page_id': receipt['pages'][0]['id'], 'crop': [0, 0, 1, 1]})
     assert result.status_code == 202, result.text
     return result.json()['id']
+
+
+@pytest.mark.parametrize('key', [KEY, 'AIza' + 'synthetic-key-never-a-real-credential'])
+def test_google_key_formats_save_and_round_trip(client, monkeypatch, key):
+    if os.name != 'nt':
+        monkeypatch.setattr('app.google_key._protect', lambda value, **_: value[::-1])
+    saved = client.put('/api/v1/vision/google-key', json={'api_key': ' ' + key + ' '})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()['google_key_saved'] is True
+    assert saved.json()['provider'] == 'local' and saved.json()['google_consent'] is False
+    assert load_google_key(client.store.root) == key
+    assert key.encode() not in (client.store.root / KEY_FILE).read_bytes()
+    assert key not in saved.text
+
+
+@pytest.mark.parametrize('invalid_key', ['', 'short', 'a' * 257, KEY + '\r\nsecret',
+                                       KEY + '\tsecret', KEY + ' secret', KEY + '\x00', KEY + '\u00e9'])
+def test_invalid_key_preserves_saved_key_and_is_not_echoed(client, google, invalid_key):
+    encrypted = (client.store.root / KEY_FILE).read_bytes()
+    result = client.put('/api/v1/vision/google-key', json={'api_key': invalid_key})
+    assert result.status_code == 422
+    assert result.json()['detail'] == 'Enter a valid Google AI Studio API key.'
+    assert (client.store.root / KEY_FILE).read_bytes() == encrypted
+    assert load_google_key(client.store.root) == KEY
 
 
 def test_key_is_write_only_protected_and_excluded_from_backups(client, google):
