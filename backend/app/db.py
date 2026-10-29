@@ -119,7 +119,7 @@ class Store:
         with self.connect() as connection:
             version = connection.execute("PRAGMA user_version").fetchone()[0]
             if version > 3:
-                raise RuntimeError("This workspace needs a newer ReceiptIQ version.")
+                raise RuntimeError("This workspace needs a newer Receiptor version.")
             if version in (1, 2):
                 from .backups import create_backup
 

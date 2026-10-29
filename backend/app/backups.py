@@ -125,14 +125,14 @@ def _validate_extract(archive, staging):
             if entry.file_size > 1024**2 and entry.file_size > max(entry.compress_size, 1) * 1000:
                 raise ValueError("Backup compression ratio is unsafe.")
         if "backup.json" not in names or "receiptiq.sqlite3" not in names:
-            raise ValueError("Not a ReceiptIQ workspace backup.")
+            raise ValueError("Not a Receiptor workspace backup.")
         if bundle.getinfo("backup.json").file_size > 8 * 1024**2:
             raise ValueError("Backup manifest is too large.")
         metadata = json.loads(bundle.read("backup.json"))
         if not isinstance(metadata, dict) or metadata.get("format") != BACKUP_VERSION or type(metadata.get("schema")) is not int:
             raise ValueError("Unsupported backup format.")
         if metadata["schema"] < 1 or metadata["schema"] > MAX_SCHEMA:
-            raise ValueError("This backup needs a different ReceiptIQ version.")
+            raise ValueError("This backup needs a different Receiptor version.")
         expected = metadata.get("files")
         if not isinstance(expected, dict) or not all(isinstance(name, str) for name in expected):
             raise ValueError("Invalid backup file manifest.")
@@ -168,7 +168,7 @@ def stage_restore(root, archive):
     root, archive = Path(root).resolve(), Path(archive).resolve()
     with FileLock(str(root.parent / ("." + root.name + ".restore.lock")), timeout=0):
         if _pending_file(root).exists():
-            raise ValueError("A restore is already staged. Restart ReceiptIQ to apply it first.")
+            raise ValueError("A restore is already staged. Restart Receiptor to apply it first.")
         staging = Path(tempfile.mkdtemp(prefix="." + root.name + ".restore-", dir=root.parent))
         try:
             metadata = _validate_extract(archive, staging)
@@ -182,12 +182,12 @@ def stage_restore(root, archive):
             raise ValueError("Backup ZIP is damaged or incomplete.") from exc
         except sqlite3.Error as exc:
             shutil.rmtree(staging)
-            raise ValueError("Backup database is damaged or is not a supported ReceiptIQ workspace.") from exc
+            raise ValueError("Backup database is damaged or is not a supported Receiptor workspace.") from exc
         except BaseException:
             shutil.rmtree(staging)
             raise
     return {"staged": True, "schema": metadata["schema"], "restart_required": True,
-            "message": "Backup validated. Close and restart ReceiptIQ to restore. The previous workspace is retained."}
+            "message": "Backup validated. Close and restart Receiptor to restore. The previous workspace is retained."}
 
 
 def apply_staged_restore(root):
@@ -202,7 +202,7 @@ def apply_staged_restore(root):
             workspace_lock = FileLock(str(root / "workspace.lock"), timeout=0)
             workspace_lock.acquire()
         except Timeout as exc:
-            raise ValueError("Close the active ReceiptIQ workspace before applying a restore.") from exc
+            raise ValueError("Close the active Receiptor workspace before applying a restore.") from exc
         try:
             pending = json.loads(pending_file.read_text(encoding="utf-8"))
             if not isinstance(pending, dict):
@@ -280,7 +280,7 @@ def validate_workspace(folder):
 def _check_references(connection, root):
     tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     if not {"receipts", "documents", "jobs", "batches", "batch_files", "schema_migrations"} <= tables:
-        raise ValueError("Backup is missing required ReceiptIQ tables.")
+        raise ValueError("Backup is missing required Receiptor tables.")
     for table, columns in (("documents", "relative_path"), ("attachments", "relative_path"),
                            ("document_pages", "original_path,processed_path"), ("exports", "relative_path")):
         if table not in tables:

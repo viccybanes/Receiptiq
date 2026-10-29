@@ -175,10 +175,10 @@ fn main() {
             let started = Instant::now();
             while !healthy(port, &token) {
                 if backend.child.try_wait()?.is_some() {
-                    return Err("ReceiptIQ backend stopped during startup. Close another workspace instance and retry.".into());
+                    return Err("Receiptor backend stopped during startup. Close another workspace instance and retry.".into());
                 }
                 if started.elapsed() > Duration::from_secs(startup_limit) {
-                    return Err("ReceiptIQ backend did not start in time. Check storage permissions and free disk, then retry.".into());
+                    return Err("Receiptor backend did not start in time. Check storage permissions and free disk, then retry.".into());
                 }
                 thread::sleep(Duration::from_millis(200));
             }
@@ -186,7 +186,7 @@ fn main() {
             let allowed_port = port;
             let script = format!("Object.defineProperty(window, '__RECEIPTIQ_TOKEN__', {{value: {}, writable: false}});", serde_json::to_string(&token)?);
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External(origin.parse()?))
-                .title("ReceiptIQ").inner_size(1360.0, 900.0).min_inner_size(900.0, 640.0)
+                .title("Receiptor").inner_size(1360.0, 900.0).min_inner_size(900.0, 640.0)
                 .initialization_script(&script)
                 .on_navigation(move |url| url.scheme() == "http" && url.host_str() == Some("127.0.0.1") && url.port() == Some(allowed_port))
                 .on_new_window(|url, _| {
@@ -210,8 +210,8 @@ fn main() {
                 use windows_sys::Win32::UI::WindowsAndMessaging::{
                     MessageBoxW, MB_ICONERROR, MB_OK,
                 };
-                let message: Vec<u16> = format!("ReceiptIQ could not start.\n\n{error}\n\nClose another ReceiptIQ instance, check free disk and workspace permissions, then retry.").encode_utf16().chain(Some(0)).collect();
-                let title: Vec<u16> = "ReceiptIQ startup".encode_utf16().chain(Some(0)).collect();
+                let message: Vec<u16> = format!("Receiptor could not start.\n\n{error}\n\nClose another Receiptor instance, check free disk and workspace permissions, then retry.").encode_utf16().chain(Some(0)).collect();
+                let title: Vec<u16> = "Receiptor startup".encode_utf16().chain(Some(0)).collect();
                 MessageBoxW(
                     std::ptr::null_mut(),
                     message.as_ptr(),
@@ -220,7 +220,7 @@ fn main() {
                 );
             }
             #[cfg(not(windows))]
-            eprintln!("ReceiptIQ could not start: {error}");
+            eprintln!("Receiptor could not start: {error}");
             return;
         }
     };

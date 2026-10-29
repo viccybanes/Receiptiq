@@ -25,4 +25,4 @@ try {
     npm run build
     if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed.' }
 } finally { Pop-Location }
-Write-Host 'Setup complete. Run .\scripts\start.ps1 to open ReceiptIQ.'
+Write-Host 'Setup complete. Run .\scripts\start.ps1 to open Receiptor.'

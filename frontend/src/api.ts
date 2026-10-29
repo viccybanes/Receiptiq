@@ -8,7 +8,7 @@ export async function connect() {
   const desktopToken = (window as Window & { __RECEIPTIQ_TOKEN__?: string }).__RECEIPTIQ_TOKEN__
   const response = await fetch('/api/v1/session', { cache: 'no-store',
     headers: desktopToken ? { Authorization: 'Bearer ' + desktopToken } : {} })
-  if (!response.ok) throw new Error('Cannot connect to ReceiptIQ. Start the local server, then reload.')
+  if (!response.ok) throw new Error('Cannot connect to Receiptor. Start the local server, then reload.')
   token = (await response.json()).token
 }
 

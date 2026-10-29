@@ -161,9 +161,9 @@ def setup_status(root):
     if job.get("state") in ("queued", "running") and not (thread and thread.is_alive()):
         try:
             with FileLock(str(root / "setup.lock"), timeout=0):
-                job = {**job, "state": "interrupted", "message": "Setup paused when ReceiptIQ closed. Retry to resume downloads."}
+                job = {**job, "state": "interrupted", "message": "Setup paused when Receiptor closed. Retry to resume downloads."}
         except Timeout:
-            pass  # Another ReceiptIQ setup process still owns the durable job.
+            pass  # Another Receiptor setup process still owns the durable job.
     owned = _processes.get(str(root))
     running = bool(owned and owned.poll() is None)
     return {"ocr_ready": models_ready(root), "runtime_installed": (_runtime_directory(root) / "ollama.exe").is_file(),
@@ -244,7 +244,7 @@ def ensure_runtime(root):
             try:
                 probe.bind(("127.0.0.1", 11435))
             except OSError as exc:
-                raise RuntimeError("ReceiptIQ's private model port 11435 is busy. Close the other ReceiptIQ instance.") from exc
+                raise RuntimeError("Receiptor's private model port 11435 is busy. Close the other Receiptor instance.") from exc
         environment = os.environ.copy()
         # Go's os.UserHomeDir uses USERPROFILE on Windows; keep Ollama keys/config separate too.
         runtime_user = root / "runtimes" / "ollama-user"
@@ -387,7 +387,7 @@ def stage_location(root, target):
         current.pop("location_error", None)
         _write_json(configuration, current)
     return {"staged": True, "restart_required": True, "target": str(target),
-            "message": "Close and restart ReceiptIQ to copy this workspace. The original folder is retained for rollback."}
+            "message": "Close and restart Receiptor to copy this workspace. The original folder is retained for rollback."}
 
 
 def _file_hash(path):
@@ -524,7 +524,7 @@ def apply_pending_location():
             # Source data is never deleted; a failed/cancelled request can be retried in Settings.
             current.pop("pending", None)
             current["active_workspace"] = str(active)
-            reason = str(exc) if isinstance(exc, ValueError) else "Check destination permissions/free disk and close other ReceiptIQ/setup processes, then retry with an empty folder."
+            reason = str(exc) if isinstance(exc, ValueError) else "Check destination permissions/free disk and close other Receiptor/setup processes, then retry with an empty folder."
             current["location_error"] = "The original workspace remains active. " + reason
             try:
                 _write_json(configuration, current)

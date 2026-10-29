@@ -20,7 +20,7 @@ Users upload 20-100 images, review completed receipts while processing continues
 CPU OCR, image preprocessing, PDFs, durable batches, manual review and revision history form the base workflow. Vision uses local Qwen or explicitly enabled Google AI Studio with a user-provided key. New uploads apply vision only while unchanged and unverified; manual scans remain suggestions. Retrieval uses only current verified records with explicit opt-in, stays local, and never supplies historical prices as facts. Workplace CSV formats, photo bundles, local review assignment, PDF page grouping, backups/restore and Windows packaging extend that workflow. Google sends current receipt images/OCR to the cloud and uses the user's quota/billing, with no automatic provider fallback. The 0.4.0 installer is an unsigned preview; clean-machine and real handwritten-corpus validation remain release gates.
 
 ## Brand Commitments
-Name: ReceiptIQ. No binding visual assets or aesthetic supplied. Independent application from the adjacent Frutiger Aero website.
+Name: Receiptor. The wordmark uses dark ink for "Receip" and the existing evergreen accent for "tor". Independent application from the adjacent Frutiger Aero website.
 
 ## Product Principles
 Human verification precedes export. Preserve originals and corrections. Represent uncertainty honestly. Keep batches responsive and recoverable.

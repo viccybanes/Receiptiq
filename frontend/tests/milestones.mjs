@@ -236,11 +236,11 @@ try {
   const backupPath = path.join(artifacts, 'workspace-backup.zip')
   await (await backupDownload).saveAs(backupPath)
   assert.equal((await fs.readFile(backupPath)).subarray(0, 2).toString(), 'PK')
-  await settings.getByLabel('ReceiptIQ backup ZIP (up to 2 GB)', { exact: true }).setInputFiles({
+  await settings.getByLabel('Receiptor backup ZIP (up to 2 GB)', { exact: true }).setInputFiles({
     name: 'corrupt-backup.zip', mimeType: 'application/zip', buffer: Buffer.from('This is not a ZIP backup.'),
   })
   assert.equal(await settings.getByRole('button', { name: 'Validate and stage restore', exact: true }).isDisabled(), true)
-  await settings.getByRole('checkbox', { name: 'I understand this backup will replace the workspace when ReceiptIQ restarts.' }).check()
+  await settings.getByRole('checkbox', { name: 'I understand this backup will replace the workspace when Receiptor restarts.' }).check()
   const restoring = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/backups/restore' && response.request().method() === 'POST')
   await settings.getByRole('button', { name: 'Validate and stage restore', exact: true }).click()
   const restoreResponse = await restoring

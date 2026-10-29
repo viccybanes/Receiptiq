@@ -220,7 +220,7 @@ export default function App() {
     try {
       const result = await post<{ id: string }>('/exports', { receipt_ids: [...exportIds], include_photos: includePhotos,
         template_id: preview?.template.id || templateId, template_version: preview?.template.version })
-      await download('/exports/' + result.id + '/download', 'receiptiq-' + result.id.slice(0, 8) + (includePhotos ? '.zip' : '.csv'))
+      await download('/exports/' + result.id + '/download', 'receiptor-' + result.id.slice(0, 8) + (includePhotos ? '.zip' : '.csv'))
       setPreview(null)
     } catch (e) { setExportError((e as Error).message) }
     finally { setExporting(false) }
@@ -230,8 +230,8 @@ export default function App() {
     onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false) }}
     onDrop={e => { e.preventDefault(); setDragging(false); void uploadFiles([...e.dataTransfer.files]) }}>
     <header className="app-header">
-      <a className="brand" href="/" aria-label="ReceiptIQ home"><span className="brand-mark"><ReceiptText size={24} /></span>
-        Receipt<span>IQ</span></a>
+      <a className="brand" href="/" aria-label="Receiptor home"><span className="brand-mark"><ReceiptText size={24} /></span>
+        <span className="brand-name">Receip<span className="brand-accent">tor</span></span></a>
       <span className="header-divider" />
       <span className="workspace-name">Receipt workspace</span>
       <span className="local-label"><ShieldCheck size={16} /> Records stored on this computer</span>

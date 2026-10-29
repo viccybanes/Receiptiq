@@ -1,4 +1,8 @@
-# ReceiptIQ agent handoff
+# Receiptor agent handoff
+
+Brand update (2026-10-29): the visible app name is **Receiptor**, with evergreen **tor** in the header wordmark. Browser/desktop titles, settings, startup/recovery messages, and downloaded CSV/ZIP names use the new name. Existing `ReceiptIQ` workspace paths, launch preferences, database/backup formats, environment variables, desktop identifier, and executable names remain compatible. Future installer builds use **Receiptor Desktop**; this source change does not update an already-installed app. Historical names and paths below remain as recorded.
+
+Rebrand validation: frontend production build, isolated browser checks at desktop/mobile widths, 29 backup/system tests, Ruff on changed Python modules, and `cargo check --locked --offline` passed. The Windows installer was not rebuilt or upgrade-tested.
 
 Main baseline (2026-10-29): at the user's request, `main` now includes the selected Google-vision version `bb27516`, promoted by fast-forward. Use only `C:\Users\ruthl\Desktop\Codink\ReceiptIQ` for ongoing work. The two linked worktrees have been removed from Git; their prior branches remain available as history. Old main-worktree edits, linked-worktree artifacts, and a Git history bundle are preserved locally in ignored `.local/worktree-recovery/20261029-main/`. The existing `artifacts/dev-workspace` receipt data and shared `.venv` remain in place. The later `experiment/ocr-layout-evidence` commits after this version were intentionally not merged. Older branch/worktree status statements below are historical. This source promotion does not rebuild or update the installed Windows app.
 

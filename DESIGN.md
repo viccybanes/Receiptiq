@@ -1,5 +1,5 @@
 ---
-name: ReceiptIQ
+name: Receiptor
 description: A local receipt review workspace built around source evidence and verified records.
 colors:
   green: "#27634c"
@@ -99,13 +99,13 @@ components:
     padding: "12px 15px"
 ---
 
-# Design System: ReceiptIQ
+# Design System: Receiptor
 
 ## Overview
 
 **Creative North Star: "A document examination desk"**
 
-ReceiptIQ places a compact batch register beside the receipt image and an editable ledger. Pale mineral surfaces, dark ink, fine rules, and restrained evergreen actions keep attention on the comparison between source evidence and entered values. The system sans typography is self-contained for the local Windows workflow.
+Receiptor places a compact batch register beside the receipt image and an editable ledger. Pale mineral surfaces, dark ink, fine rules, and restrained evergreen actions keep attention on the comparison between source evidence and entered values. The system sans typography is self-contained for the local Windows workflow.
 
 The workspace is dense where users scan receipts and more spacious where they inspect images or correct fields. Verification, saving, and processing have explicit text states; color supports those states rather than carrying their meaning alone.
 

@@ -1,7 +1,7 @@
 [package]
 name = "receiptiq-desktop"
 version = "0.4.0"
-description = "ReceiptIQ local desktop host"
+description = "Receiptor local desktop host"
 edition = "2021"
 
 [build-dependencies]

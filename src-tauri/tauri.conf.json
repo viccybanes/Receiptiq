@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ReceiptIQ Desktop",
+  "productName": "Receiptor Desktop",
   "version": "0.4.0",
   "identifier": "local.receiptiq.desktop",
   "build": {"frontendDist": "shell"},
@@ -11,7 +11,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "publisher": "ReceiptIQ",
+    "publisher": "Receiptor",
     "icon": ["icons/icon.ico"],
     "shortDescription": "Private local receipt review and CSV export",
     "resources": {"../dist/receiptiq/": "backend/", "../packaging/THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md"},

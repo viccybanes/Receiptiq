@@ -57,7 +57,7 @@ def create_app(root=None, *, start_worker=True, engine=None):
         try:
             workspace_lock.acquire(timeout=0)
         except Timeout as exc:
-            raise RuntimeError("ReceiptIQ is already using this workspace. Close the other instance.") from exc
+            raise RuntimeError("Receiptor is already using this workspace. Close the other instance.") from exc
         try:
             store = Store(root)
         except BaseException:
@@ -89,7 +89,7 @@ def create_app(root=None, *, start_worker=True, engine=None):
             stop_runtime(store.root)
             workspace_lock.release()
 
-    app = FastAPI(title="ReceiptIQ", version="0.4.0", lifespan=lifespan, docs_url=None, redoc_url=None,
+    app = FastAPI(title="Receiptor", version="0.4.0", lifespan=lifespan, docs_url=None, redoc_url=None,
                   openapi_url=None)
     app.state.store, app.state.worker = store, worker
 
@@ -109,7 +109,7 @@ def create_app(root=None, *, start_worker=True, engine=None):
                 desktop or request.url.path not in ("/api/v1/session", "/api/v1/health")):
             supplied = request.headers.get("authorization", "")
             if not secrets.compare_digest(supplied, "Bearer " + token):
-                return JSONResponse({"detail": "Local session required. Reload ReceiptIQ."}, 401)
+                return JSONResponse({"detail": "Local session required. Reload Receiptor."}, 401)
         if request.method in ("POST", "PATCH", "PUT"):
             length = request.headers.get("content-length")
             if length is None or not length.isdigit():
@@ -463,7 +463,7 @@ def create_app(root=None, *, start_worker=True, engine=None):
         extension = Path(result["relative_path"]).suffix
         return FileResponse(store.file(result["relative_path"]),
                             media_type="application/zip" if extension == ".zip" else "text/csv",
-                            filename=f"receiptiq-{export_id[:8]}{extension}")
+                            filename=f"receiptor-{export_id[:8]}{extension}")
 
     @app.delete("/api/v1/receipts/{receipt_id}")
     def delete(receipt_id: str):

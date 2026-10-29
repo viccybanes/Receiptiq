@@ -186,11 +186,11 @@ export default function WorkspaceSettings({ onClose, onTemplatesChanged }: Props
     if (!restoreFile || !confirmRestore) return
     setBackupBusy('restore'); setError(''); setBackupMessage('')
     try {
-      if (restoreFile.size > 2 * 1024 ** 3) throw new Error('Choose a ReceiptIQ backup ZIP no larger than 2 GB.')
+      if (restoreFile.size > 2 * 1024 ** 3) throw new Error('Choose a Receiptor backup ZIP no larger than 2 GB.')
       const form = new FormData(); form.append('file', restoreFile)
       const result = await api<{ staged: boolean; message: string }>('/backups/restore', { method: 'POST', body: form })
       setStaged(result.staged)
-      setBackupMessage(result.message || 'Backup validated. Close and restart ReceiptIQ to apply it. The previous workspace is retained.')
+      setBackupMessage(result.message || 'Backup validated. Close and restart Receiptor to apply it. The previous workspace is retained.')
     } catch (cause) { setError((cause as Error).message) }
     finally { setBackupBusy('') }
   }
@@ -200,11 +200,11 @@ export default function WorkspaceSettings({ onClose, onTemplatesChanged }: Props
     try {
       const target = location.trim()
       if (!(/^[A-Za-z]:[\\/]/.test(target) || target.startsWith('/') && !target.startsWith('//'))) {
-        throw new Error('Enter an absolute local folder path, such as C:\\ReceiptIQ-data.')
+        throw new Error('Enter an absolute local folder path, such as C:\\Receiptor-data.')
       }
       const result = await post<{ message: string }>('/system/location', { target })
       setLocationStaged(true)
-      setLocationMessage(result.message || 'Workspace move staged. Close and restart ReceiptIQ to apply it. The original workspace remains available.')
+      setLocationMessage(result.message || 'Workspace move staged. Close and restart Receiptor to apply it. The original workspace remains available.')
     } catch (cause) { setError((cause as Error).message) }
     finally { setLocationBusy(false) }
   }
@@ -313,11 +313,11 @@ export default function WorkspaceSettings({ onClose, onTemplatesChanged }: Props
           <div className="settings-location"><h3>Workspace location</h3>
             {capabilities?.workspace_location?.location_error && <p className="settings-inline-error" role="alert">
               {capabilities.workspace_location.location_error}</p>}
-            <p className="settings-help">A move runs after closing and reopening ReceiptIQ. Leave it open during that startup;
+            <p className="settings-help">A move runs after closing and reopening Receiptor. Leave it open during that startup;
               copying to another drive can take several minutes. The original folder stays available.</p>
-            <p>Choose a local folder for receipts, edits, photos, and model files. The move is staged now and applied only after ReceiptIQ closes and restarts.</p>
+            <p>Choose a local folder for receipts, edits, photos, and model files. The move is staged now and applied only after Receiptor closes and restarts.</p>
             <label className="settings-field"><span>Data workspace folder</span><input type="text" value={location}
-              placeholder="C:\ReceiptIQ-data" disabled={locationBusy || locationStaged || !capabilities}
+              placeholder="C:\Receiptor-data" disabled={locationBusy || locationStaged || !capabilities}
               onChange={event => { setLocation(event.target.value); setConfirmMove(false); setLocationMessage('') }} /></label>
             <label className="settings-confirm"><input type="checkbox" checked={confirmMove}
               disabled={locationBusy || locationStaged || !location.trim() || location.trim() === capabilities?.workspace}
@@ -325,7 +325,7 @@ export default function WorkspaceSettings({ onClose, onTemplatesChanged }: Props
               <span>Move workspace on next restart; original remains available.</span></label>
             <button type="button" disabled={!confirmMove || locationBusy || locationStaged || setupBusy || staged}
               onClick={() => void stageLocation()}>{locationBusy && <LoaderCircle size={15} className="spin" />}
-              {locationStaged ? 'Move staged — restart ReceiptIQ' : locationBusy ? 'Staging workspace move…' : 'Stage workspace move'}</button>
+              {locationStaged ? 'Move staged — restart Receiptor' : locationBusy ? 'Staging workspace move…' : 'Stage workspace move'}</button>
             {locationMessage && <div className="settings-success" role="status">{locationMessage}</div>}
           </div>
         </>}
@@ -350,17 +350,17 @@ export default function WorkspaceSettings({ onClose, onTemplatesChanged }: Props
             <button type="button" disabled={!!backupBusy} aria-label={`Download ${backup.name}`} onClick={() => void downloadBackup(backup)}>
               <ArrowDownToLine size={15} /> Download</button></li>)}</ul>}
         <div className="settings-restore"><h3>Restore a backup</h3>
-          <p>The backup is validated and staged first. It replaces this workspace only after you close and restart ReceiptIQ. The previous workspace is retained for recovery.</p>
-          <label className="settings-field"><span>ReceiptIQ backup ZIP (up to 2 GB)</span>
+          <p>The backup is validated and staged first. It replaces this workspace only after you close and restart Receiptor. The previous workspace is retained for recovery.</p>
+          <label className="settings-field"><span>Receiptor backup ZIP (up to 2 GB)</span>
             <input type="file" accept=".zip,application/zip" disabled={!!backupBusy || staged} onChange={event => {
               setRestoreFile(event.target.files?.[0] || null); setConfirmRestore(false); setError('')
             }} /></label>
           <label className="settings-confirm"><input type="checkbox" checked={confirmRestore} disabled={!restoreFile || !!backupBusy || staged}
             onChange={event => setConfirmRestore(event.target.checked)} />
-            <span>I understand this backup will replace the workspace when ReceiptIQ restarts.</span></label>
+            <span>I understand this backup will replace the workspace when Receiptor restarts.</span></label>
           <button type="button" disabled={!restoreFile || !confirmRestore || !!backupBusy || staged} onClick={() => void stageRestore()}>
             {backupBusy === 'restore' ? <LoaderCircle size={15} className="spin" /> : <Archive size={15} />}
-            {staged ? 'Restore staged — restart ReceiptIQ' : backupBusy === 'restore' ? 'Validating backup…' : 'Validate and stage restore'}</button>
+            {staged ? 'Restore staged — restart Receiptor' : backupBusy === 'restore' ? 'Validating backup…' : 'Validate and stage restore'}</button>
         </div>
       </section>
     </div>
