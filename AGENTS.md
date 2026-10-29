@@ -3,7 +3,7 @@
 - Read [CONTEXT.md](CONTEXT.md) for the current handoff, behavior changes, branch boundaries, validation, and operational cautions before making changes.
 
 - Preserve the original four-milestone plan in PLAN.md and workplace details below.
-- React/TypeScript, Python/FastAPI, SQLite, local PaddleOCR and Ollama vision. Tauri owns Windows distribution. Google AI Studio is an optional bring-your-own-key vision provider requiring explicit cloud consent; local Qwen remains the default. No automatic cloud fallback or n8n.
+- React/TypeScript, Python/FastAPI, SQLite, local PaddleOCR and Ollama vision. Tauri owns Windows distribution. Google AI Studio is an optional bring-your-own-key vision provider requiring explicit cloud consent; local Qwen remains the default. With Google enabled, new uploads use the requested sequence: Gemini 3.5 Flash-Lite, 3.1 Flash-Lite, 3.8 Flash, then local Qwen 2B on failure. Manual scans keep their selected model. No n8n.
 - Primary workload is tens of receipt images per batch. Keep processing bounded, durable, and independent from human review.
 - Keep expense wording: Purchase date, Vendor, Receipt number, Receipt photo, Notes; Description, Quantity, Unit, Unit price, Amount, Type, Photo of item purchased. Item photos are optional. Do not restore Tax/Subtotal/Discount controls.
 - Join distinct receipt codes in source order with " / ", retaining leading zeroes.

@@ -74,16 +74,35 @@ class Worker:
             else:
                 self.process(job)
         except Exception as exc:
+            if self.cancelled(job):
+                return True
             logger.exception("Receipt processing failed for job %s", job["id"])
             message = str(exc)[:1000] or "OCR failed. Open the receipt for manual entry or retry."
+            payload = json.loads(job["payload_json"])
+            upload_chain = job["kind"] == "vision" and payload.get("auto_apply") and "fallbacks" in payload
+            retry = (job["kind"] == "vision" and not upload_chain and payload.get("provider", "local") == "local"
+                     and job["attempts"] + 1 < MAX_VISION_ATTEMPTS)
+            stage = (f"Vision failed; retry {job['attempts'] + 1}/{MAX_VISION_ATTEMPTS - 1} after queue finishes"
+                     if retry else "Processing failed; retry manually")
+            if upload_chain:
+                # Revoking cloud consent stops the whole sequence, including queued fallbacks.
+                try:
+                    require_google_enabled(self.store.root)
+                except ValueError:
+                    pass
+                else:
+                    payload.setdefault("failed_models", []).append({"provider": payload["provider"], "model": payload["model"]})
+                    if payload["fallbacks"]:
+                        failed_model = payload["model"]
+                        payload.update(payload["fallbacks"].pop(0))
+                        retry = True
+                        stage = f"{failed_model} failed; next: {payload['model']} after queue finishes"
+                    else:
+                        stage = "All upload vision models failed; retry manually"
             with self.store.connect() as connection:
-                retry = (job["kind"] == "vision" and json.loads(job["payload_json"]).get("provider", "local") == "local"
-                         and job["attempts"] + 1 < MAX_VISION_ATTEMPTS)
-                stage = (f"Vision failed; retry {job['attempts'] + 1}/{MAX_VISION_ATTEMPTS - 1} after queue finishes"
-                         if retry else "Processing failed; retry manually")
-                connection.execute("UPDATE jobs SET state=?,stage=?,error=?,updated_at=? "
+                connection.execute("UPDATE jobs SET state=?,stage=?,error=?,payload_json=?,updated_at=? "
                                    "WHERE id=? AND state='processing'",
-                                   ("queued" if retry else "failed", stage, message, now(), job["id"]))
+                                   ("queued" if retry else "failed", stage, message, json.dumps(payload), now(), job["id"]))
                 if job["kind"] in ("ocr", "preview"):
                     connection.execute("UPDATE receipts SET status='failed',error=?,updated_at=? "
                                        "WHERE id=? AND status='processing'", (message, now(), job["receipt_id"]))
@@ -105,11 +124,11 @@ class Worker:
         provider = payload.get("provider", "local")
         if provider not in ("local", "google"):
             raise ValueError("Unknown vision provider. Request a new scan from Settings.")
-        if provider == "google":
+        if provider == "google" or "fallbacks" in payload:
             require_google_enabled(self.store.root)
         engine = GoogleVisionEngine(self.store.root) if provider == "google" else self.vision
         examples = [] if provider == "google" else self.retrieval.search(receipt["id"])
-        stage = "Reading with Google vision" if provider == "google" else "Reading with local vision"
+        stage = ("Reading with Google vision" if provider == "google" else "Reading with local vision") + f" ({payload['model']})"
         self.store.execute("UPDATE jobs SET stage=?,progress=20 WHERE id=?", (stage, job["id"]))
         selected_pages = self.store.read("SELECT * FROM document_pages WHERE receipt_id=? ORDER BY page_number",
                                          (receipt["id"],)) if payload.get("auto_apply") else [page]
@@ -149,6 +168,12 @@ class Worker:
                                      preserve_items=len(receipt["pages"]) > 1 and not payload.get("auto_apply"))
         if self.cancelled(job):
             return
+        if "fallbacks" in payload:
+            require_google_enabled(self.store.root)
+        if payload.get("failed_models"):
+            result.setdefault("provenance", {})["upload_fallbacks"] = payload["failed_models"]
+            result["notice"] = (f"Earlier upload scans failed; this result uses {payload['model']}. "
+                                + result.get("notice", ""))
         result["ocr_assistance"] = {"status": ocr_status, "seconds": ocr_seconds, "line_count": len(lines)}
         if location_notice:
             result["notice"] = result.get("notice", "") + location_notice

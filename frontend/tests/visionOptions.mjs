@@ -161,7 +161,7 @@ try {
   assert.equal(await page.getByLabel('Google API key', { exact: true }).inputValue(), '')
   assert.equal(await page.locator('#gemini-model-options option[value="gemini-3.5-flash-lite"]').count(), 1)
   assert.equal(await page.locator('#gemini-model-options option[value="gemini-3.1-flash-lite"]').count(), 1)
-  await page.getByLabel('Gemini model', { exact: true }).fill('gemini-3.5-flash-lite')
+  await page.getByLabel('Manual Gemini model', { exact: true }).fill('gemini-3.5-flash-lite')
   await saveProvider.click()
   await page.getByText('Google enabled for new uploads and manual scans.').waitFor()
   assert.equal(settings.google_model, 'gemini-3.5-flash-lite')

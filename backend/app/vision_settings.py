@@ -47,6 +47,18 @@ def selected_vision(root, model=None, *, provider=None, google_model=None):
     return {"provider": "local", "model": model}
 
 
+def selected_upload_vision(root):
+    """Pin the upload-only fallback order; local opt-out still stays local."""
+    selection = selected_vision(root)
+    if selection["provider"] == "google":
+        return {"provider": "google", "model": "gemini-3.5-flash-lite", "fallbacks": [
+            {"provider": "google", "model": "gemini-3.1-flash-lite"},
+            {"provider": "google", "model": "gemini-3.8-flash"},
+            {"provider": "local", "model": "qwen3-vl:2b-instruct"},
+        ]}
+    return selection
+
+
 def require_google_enabled(root):
     settings = load_vision_settings(root)
     if settings.provider != "google" or not settings.google_consent or not (root / KEY_FILE).is_file():

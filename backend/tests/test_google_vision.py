@@ -19,6 +19,7 @@ from app.google_key import KEY_FILE, load_google_key
 from app.system import _location_files
 from app.vision import VisionError, VisionReceipt, _output_schema
 from app.vision_settings import VisionSettings, load_vision_settings, save_vision_settings
+from app.worker import Worker
 
 client = client_fixture
 KEY = "AQ.synthetic-google-key-never-a-real-credential"
@@ -267,6 +268,139 @@ def test_google_upload_auto_apply_preserves_intervening_edits(client, google, ed
     if edit_during_scan:
         assert client.post(f"/api/v1/receipts/{receipt['id']}/candidates/{current['candidate']['id']}/apply",
                            json={'revision': current['revision']}).status_code == 409
+
+
+@pytest.mark.parametrize('succeed_at', [0, 1, 2, 3, None])
+def test_upload_fallback_order_is_durable_and_stops_at_success(client, google, monkeypatch, succeed_at):
+    expected = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.8-flash', 'qwen3-vl:2b-instruct']
+    calls = []
+    historical = [{'citation': 'LOCAL-ONLY-HISTORY'}]
+    (client.store.root / 'setup-profile.json').write_text(json.dumps({'model': 'qwen3-vl:4b-instruct'}))
+    accepted = upload(client, batch(client), auto_ocr=False).json()
+    assert client.worker.process_one()
+    receipt = client.store.receipt(accepted['id'])
+    job_id = receipt['vision_job']['id']
+    # Changing the manual model never changes the sequence already accepted with the upload.
+    client.patch('/api/v1/vision/settings', json={'google_model': 'gemini-synthetic-manual-model'})
+
+    def cloud_call():
+        request = google['requests'][-1]
+        model = request.url.path.rsplit('/', 1)[-1].removesuffix(':generateContent')
+        calls.append(model)
+        google['status'] = 200 if succeed_at == expected.index(model) else 503
+        assert 'LOCAL-ONLY-HISTORY' not in request.content.decode()
+
+    def local_extract(images, lines, **options):
+        calls.append(options['model'])
+        assert options['examples'] == historical
+        if succeed_at != 3:
+            raise VisionError('Synthetic local model failure')
+        return {'draft': {**options['current'], 'supplier': 'LOCAL SAMPLE'}, 'model': options['model'], 'field_meta': {}}
+
+    google['on_request'] = cloud_call
+    count = 4 if succeed_at is None else succeed_at + 1
+    for index in range(count):
+        # Reconstruct the worker each time: provider/model and remaining fallbacks must come from SQLite.
+        worker = Worker(client.store, engine=client.worker.engine)
+        monkeypatch.setattr(worker.retrieval, 'search', lambda *args, **kwargs: historical)
+        monkeypatch.setattr(worker.vision, 'extract', local_extract)
+        assert worker.process_one()
+        job = client.store.one('SELECT * FROM jobs WHERE id=?', (job_id,))
+        assert job['attempts'] == index + 1
+        if index + 1 < count:
+            assert job['state'] == 'queued'
+            assert expected[index + 1] in job['stage']
+            assert json.loads(job['payload_json'])['model'] == expected[index + 1]
+
+    assert calls == expected[:count]
+    assert not worker.process_one()
+    current = client.store.receipt(receipt['id'])
+    assert current['status'] == 'needs_review' and current['verified_revision'] is None
+    assert KEY not in json.dumps(current) and KEY not in json.dumps(job)
+    if succeed_at is None:
+        assert job['state'] == 'failed' and job['stage'] == 'All upload vision models failed; retry manually'
+        assert current['candidate'] is None and current['revision'] == receipt['revision']
+    else:
+        assert job['state'] == 'done' and current['candidate']['model'] == expected[succeed_at]
+        assert current['candidate']['auto_applied'] is True
+        assert current['data']['supplier'] == ('LOCAL SAMPLE' if succeed_at == 3 else 'GOOGLE SAMPLE')
+        assert [entry['model'] for entry in current['candidate'].get('provenance', {}).get('upload_fallbacks', [])] == expected[:succeed_at]
+
+
+@pytest.mark.parametrize('intervention', ['edit', 'cancel', 'revoke'])
+def test_upload_fallback_preserves_edits_and_honors_stop_requests(client, google, intervention):
+    group = batch(client)
+    accepted = upload(client, group, auto_ocr=False).json()
+    assert client.worker.process_one()
+    google['status'] = 503
+    assert client.worker.process_one()
+    current = client.store.receipt(accepted['id'])
+    assert current['vision_job']['state'] == 'queued'
+    if intervention == 'edit':
+        current['data']['supplier'] = 'HUMAN CORRECTION'
+        assert client.patch('/api/v1/receipts/' + current['id'], json={
+            'revision': current['revision'], 'data': current['data']}).status_code == 200
+    elif intervention == 'cancel':
+        assert client.post('/api/v1/batches/' + group['id'] + '/cancel').status_code == 200
+    else:
+        assert client.patch('/api/v1/vision/settings', json={'provider': 'local'}).status_code == 200
+    google['status'] = 200
+    assert client.worker.process_one() is (intervention != 'cancel')
+    current = client.store.receipt(accepted['id'])
+    assert not client.worker.process_one()
+    if intervention == 'edit':
+        assert current['data']['supplier'] == 'HUMAN CORRECTION'
+        assert not current['candidate'].get('auto_applied')
+        assert current['candidate']['model'] == 'gemini-3.1-flash-lite'
+    else:
+        assert len(google['requests']) == 1 and current['candidate'] is None
+        assert current['vision_job']['state'] == ('cancelled' if intervention == 'cancel' else 'failed')
+
+
+@pytest.mark.parametrize('mode', ['cancel', 'revoke', 'shutdown'])
+def test_upload_failure_during_stop_does_not_advance_fallback(client, google, mode):
+    group = batch(client)
+    accepted = upload(client, group, auto_ocr=False).json()
+    assert client.worker.process_one()
+
+    def stop():
+        if mode == 'cancel':
+            client.post('/api/v1/batches/' + group['id'] + '/cancel')
+        elif mode == 'revoke':
+            save_vision_settings(client.store.root, VisionSettings(provider='local'))
+        else:
+            client.worker.stop.set()
+
+    google['on_request'] = stop
+    google['status'] = 503
+    assert client.worker.process_one()
+    job = client.store.one('SELECT * FROM jobs WHERE receipt_id=? AND kind=\'vision\'', (accepted['id'],))
+    assert job['state'] == {'cancel': 'cancelled', 'revoke': 'failed', 'shutdown': 'processing'}[mode]
+    assert json.loads(job['payload_json'])['model'] == 'gemini-3.5-flash-lite'
+    assert len(google['requests']) == 1
+
+
+def test_upload_fallback_waits_for_fresh_upload_and_revocation_stops_local_step(client, google, monkeypatch):
+    group = batch(client, 2)
+    first = upload(client, group, 0, auto_ocr=False).json()['id']
+    second = upload(client, group, 1, auto_ocr=False).json()['id']
+    google['status'] = 503
+    assert client.worker.process_one() and client.worker.process_one()  # First preview and failed 3.5 scan.
+    assert client.store.receipt(first)['vision_job']['state'] == 'queued'
+    assert client.worker.process_one()  # The second preview precedes the first receipt's fallback.
+    assert client.store.receipt(second)['vision_job']['state'] == 'queued'
+    google['status'] = 200
+    assert client.worker.process_one()
+    assert client.store.receipt(second)['candidate']['model'] == 'gemini-3.5-flash-lite'
+    google['status'] = 503
+    assert client.worker.process_one() and client.worker.process_one()  # First receipt's 3.1 and 3.8 fail.
+    job = client.store.one("SELECT * FROM jobs WHERE receipt_id=? AND kind='vision'", (first,))
+    assert json.loads(job['payload_json'])['model'] == 'qwen3-vl:2b-instruct'
+    monkeypatch.setattr(client.worker.vision, 'extract', lambda *args, **kwargs: pytest.fail('Revoked sequence ran Qwen'))
+    client.patch('/api/v1/vision/settings', json={'provider': 'local'})
+    assert client.worker.process_one() and not client.worker.process_one()
+    assert client.store.receipt(first)['vision_job']['state'] == 'failed'
+    assert len(google['requests']) == 4
 
 
 @pytest.mark.parametrize('legacy', [False, True])
