@@ -7,7 +7,7 @@ import { displayDate, inputDate } from './purchaseDate'
 import type { Issue, Receipt, ReceiptData, VisionSettings } from './types'
 import { visionOverlay } from './visionOverlay'
 import PhotoField from './PhotoField'
-import { completeAmounts } from './amount'
+import { completeAmounts, effectiveDiscount } from './amount'
 import ReceiptAssistance from './ReceiptAssistance'
 
 const ITEM_TYPES = ['Materials', 'Tools', 'Equipment', 'Outside Labor', 'Services', 'Permits & Fees',
@@ -299,6 +299,7 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
   if (!receipt || !draft) return <div className="review-placeholder"><LoaderCircle size={24} className="spin" /><p>Opening receipt…</p></div>
   const warnings = receipt.issues.filter(issue => !issue.blocking)
   const totalIssues = receipt.issues.filter(issue => issue.field === 'total' || issue.field === 'item_sum')
+  const discountIssues = receipt.issues.filter(issue => issue.field === 'total_discount_percent')
   const highlighted = receipt.evidence.lines.filter(line => highlight.includes(line.id) && line.page === page)
   const overlay = currentPage ? visionOverlay(receipt, draft, currentPage.id) : []
   const showOverlay = !!receipt.vision_settings?.capture_regions
@@ -523,10 +524,18 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
             onChange={e => change({ ...draft, notes: e.target.value })} /></label>
         </div>
         <div className="items-heading"><h3>Line items</h3>
+          <div className="items-totals">
+          <label className="total-discount-field"><span>Total Discount (%)</span>
+            <input aria-label="Total Discount (%)" inputMode="decimal" maxLength={32} placeholder="Optional"
+              value={draft.total_discount_percent || ''} data-field="total_discount_percent" {...issueProps(discountIssues)}
+              onChange={e => change({ ...draft, total_discount_percent: e.target.value })} /></label>
           <label className="total-field"><span>Total: {draft.currency === 'PHP' ? '₱' : draft.currency}</span>
             <input aria-label="Total" inputMode="decimal" value={draft.total} data-field="total" onFocus={() => focus('total')}
               {...issueProps(totalIssues)}
-              onChange={e => change({ ...draft, total: e.target.value })} /></label></div>
+              onChange={e => change({ ...draft, total: e.target.value })} /></label></div></div>
+        <p className="discount-help">Blank line discounts follow Total Discount; enter 0 to exclude a line. Unit price is before discount.
+          CSV uses discounted prices and amounts, without discount columns.</p>
+        <InlineIssues issues={discountIssues} />
         <InlineIssues issues={totalIssues} />
         {draft.items.map((item, index) => {
           // Issues describe the saved order. Keep them on the same item during row edits.
@@ -534,7 +543,7 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
           const prefix = 'items.' + savedIndex + '.'
           const itemIssues = receipt.issues.filter(issue => issue.field.startsWith(prefix))
           const fieldIssues = (key: string) => itemIssues.filter(issue => issue.field === prefix + key ||
-            (issue.field === prefix + 'arithmetic' && ['quantity', 'unit_price', 'line_total'].includes(key)) ||
+            (issue.field === prefix + 'arithmetic' && ['quantity', 'unit_price', 'discount_percent', 'line_total'].includes(key)) ||
             (issue.field === prefix + 'pricing' && ['quantity', 'unit_price'].includes(key)))
           return <fieldset key={item.id || index} disabled={busy || photosBusy}
             {...issueProps(itemIssues)} className={'item-fields ' + issueProps(itemIssues).className}>
@@ -556,6 +565,14 @@ export default function Review({ id, saveBeforeLeave, onChanged, onError, onNext
             {...issueProps(fieldIssues('description'))}
             value={item.description} placeholder="Description" data-field={'items.' + index + '.description'} onFocus={() => focus(prefix + 'description')}
             onChange={e => change({ ...draft, items: draft.items.map((value, i) => i === index ? { ...value, description: e.target.value } : value) })} /></label>
+          <label className="item-discount"><span>Discount (%)</span>
+            <input aria-label={'Item ' + (index + 1) + ' Discount (%)'} inputMode="decimal" maxLength={32} placeholder="Optional"
+              data-field={'items.' + index + '.discount_percent'} value={effectiveDiscount(item, draft)}
+              {...issueProps(fieldIssues('discount_percent'))}
+              onChange={e => change({ ...draft, items: draft.items.map((value, i) => i === index
+                ? { ...value, discount_percent: e.target.value } : value) })} />
+            {!item.discount_percent && draft.total_discount_percent && <small>From total</small>}
+          </label>
           {(['quantity', 'unit', 'unit_price', 'line_total', 'item_type'] as const).map((key, position) => <label key={key}><span>{['Quantity', 'Unit', 'Unit price', 'Amount', 'Type'][position]}</span>
             {key === 'item_type' ? <select aria-label={'Item ' + (index + 1) + ' Type'}
               {...issueProps(fieldIssues(key))}

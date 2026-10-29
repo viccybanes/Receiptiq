@@ -1,8 +1,8 @@
 export type Item = { id: string; item_number: number | null; description: string; quantity: string; unit: string;
-  unit_price: string; line_total: string; item_type: string; photo_id: string }
+  unit_price: string; discount_percent?: string; line_total: string; item_type: string; photo_id: string }
 export type ReceiptData = {
   supplier: string; receipt_number: string; receipt_date: string; currency: string
-  subtotal: string; tax: string; discount: string; total: string; items: Item[]
+  subtotal: string; tax: string; discount: string; total: string; total_discount_percent?: string; items: Item[]
   notes: string; receipt_photo_id: string
 }
 export type Issue = { id: string; field: string; message: string; blocking: boolean }

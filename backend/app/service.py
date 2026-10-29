@@ -7,7 +7,7 @@ from decimal import Decimal
 from fastapi import HTTPException
 
 from .db import now, uid
-from .extraction import receipt_issues
+from .extraction import apply_percentage_discounts, discounted_price, effective_discount, receipt_issues
 from .templates import get_template, render_rows, required_issues, serialize_rows
 
 COLUMNS = ["Receipt ID", "Purchase date", "Vendor", "Receipt number", "Receipt photo", "Notes",
@@ -38,6 +38,14 @@ def edit_receipt(store, receipt_id, edit):
         receipt = require_mutable_receipt(store, receipt_id)
         if receipt["revision"] != edit.revision:
             raise HTTPException(409, "Receipt changed. Reload before saving.")
+        # Older clients may omit these optional fields; only an explicit blank clears an override.
+        if "total_discount_percent" not in edit.data.model_fields_set:
+            data["total_discount_percent"] = receipt["data"].get("total_discount_percent", "")
+        old_discounts = {item["id"]: item.get("discount_percent", "") for item in receipt["data"]["items"]}
+        for item, supplied in zip(data["items"], edit.data.items):
+            if "discount_percent" not in supplied.model_fields_set:
+                item["discount_percent"] = old_discounts.get(item["id"], "")
+        data = apply_percentage_discounts(data, receipt["data"])
         if data == receipt["data"]:
             return receipt
         photo_ids = [data["receipt_photo_id"]] + [item["photo_id"] for item in data["items"]]
@@ -133,12 +141,15 @@ def csv_rows(receipts, store):
     for receipt in receipts:
         data = receipt["data"]
         for item in data["items"] or [{}]:
+            price = item.get("unit_price", "")
+            if price and effective_discount(item, data):
+                price = format(discounted_price(price, effective_discount(item, data)).normalize(), "f")
             row = {"Receipt ID": receipt["id"], "Purchase date": data["receipt_date"], "Vendor": data["supplier"],
                    "Receipt number": data["receipt_number"],
                    "Receipt photo": photo_reference(store, receipt, data.get("receipt_photo_id", ""), original=True),
                    "Notes": data.get("notes", ""), "Item number": item.get("item_number", ""),
                    "Description": item.get("description", ""), "Quantity": item.get("quantity", ""),
-                   "Unit": item.get("unit", ""), "Unit price": item.get("unit_price", ""),
+                   "Unit": item.get("unit", ""), "Unit price": price,
                    "Amount": item.get("line_total", ""), "Type": item.get("item_type", "Materials"),
                    "Photo of item purchased": photo_reference(store, receipt, item.get("photo_id", "")),
                    "Total": data["total"]}

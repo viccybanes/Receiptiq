@@ -2,7 +2,7 @@
 
 import re
 from datetime import date
-from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
 
 from .layout import group_rows
 from .models import blank_data
@@ -28,6 +28,58 @@ def decimal(value):
     if not number.is_finite():
         raise ValueError("Number must be finite")
     return number
+
+
+def percentage(value):
+    if not re.fullmatch(r"[0-9]{1,3}(?:\.[0-9]{1,6})?", value) or not 0 <= Decimal(value) <= 100:
+        raise ValueError("Use a discount from 0 to 100, with up to six decimal places, or leave it blank.")
+    return Decimal(value)
+
+
+def effective_discount(item, data):
+    # Blank follows the receipt default; an explicit zero is a manual override.
+    return item.get("discount_percent") or data.get("total_discount_percent", "")
+
+
+def discounted_price(price, percent):
+    with localcontext() as context:
+        context.prec = 60
+        factor = (100 - percentage(percent)) / 100 if percent else Decimal(1)
+        return (decimal(price) * factor).quantize(Decimal("0.000000000001"), rounding=ROUND_HALF_UP) + Decimal(0)
+
+
+def discounted_amount(item, data):
+    quantity = decimal(item["quantity"])
+    if quantity != quantity.to_integral_value():
+        raise ValueError("Quantity must be a whole number.")
+    with localcontext() as context:
+        context.prec = 60
+        return (quantity * discounted_price(item["unit_price"], effective_discount(item, data))).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP) + Decimal(0)
+
+
+def apply_percentage_discounts(data, previous):
+    """Recalculate explicit percentage edits from gross prices, never from already-net Amounts."""
+    old_items = {item["id"]: item for item in previous["items"]}
+    changed = False
+    for item in data["items"]:
+        old = old_items.get(item["id"])
+        percent = effective_discount(item, data)
+        old_percent = effective_discount(old, previous) if old else ""
+        try:
+            factors_changed = old and any(item[key] != old[key] for key in ("quantity", "unit_price"))
+            if (percent != old_percent or (percent and not old) or
+                    (percent and factors_changed and decimal(old["line_total"]) == discounted_amount(old, previous))):
+                item["line_total"] = f"{discounted_amount(item, data):.2f}"
+                changed = True
+        except ValueError:
+            pass  # Incomplete/invalid drafts remain editable and are blocked by validation.
+    if changed and (not data["total"] or data["total"] == previous["total"]):
+        try:
+            data["total"] = f"{sum(decimal(item['line_total']) for item in data['items']):.2f}"
+        except ValueError:
+            pass
+    return data
 
 
 def extraction_date(value):
@@ -179,9 +231,23 @@ def validate(data):
             except ValueError as exc:
                 issue(key, str(exc), True)
     items = data.get("items", [])
+    if data.get("total_discount_percent"):
+        try:
+            percentage(data["total_discount_percent"])
+        except ValueError as exc:
+            issue("total_discount_percent", str(exc), True)
     item_totals = []
     for i, item in enumerate(items):
         prefix = f"items.{i}"
+        percent = effective_discount(item, data)
+        valid_discount = True
+        if percent:
+            try:
+                percentage(percent)
+            except ValueError as exc:
+                valid_discount = False
+                if item.get("discount_percent"):
+                    issue(prefix + ".discount_percent", str(exc), True)
         if not item["description"]:
             issue(prefix + ".description", f"Item {i + 1} needs a description.", True)
         if item.get("unit") and not re.search(r"[A-Za-z]", item["unit"]):
@@ -202,8 +268,12 @@ def validate(data):
         else:
             issue(prefix + ".line_total", f"Line {i + 1} has no Amount.", True)
         if not item["quantity"] or not item["unit_price"]:
-            issue(prefix + ".pricing", f"Item {i + 1}: quantity or unit price is missing. Check the original.")
-        if len(values) == 3 and abs(values["quantity"] * values["unit_price"] - values["line_total"]) > Decimal("0.005"):
+            issue(prefix + ".pricing", f"Item {i + 1}: quantity or unit price is missing. Check the original.", bool(percent))
+        if percent and valid_discount and len(values) == 3 and values["quantity"] == values["quantity"].to_integral_value():
+            if discounted_amount(item, data) != values["line_total"]:
+                issue(prefix + ".arithmetic", f"Line {i + 1}: Amount does not match Quantity × discounted Unit price. "
+                      "Check Discount (%), Quantity, and Unit price.", True)
+        elif not percent and len(values) == 3 and abs(values["quantity"] * values["unit_price"] - values["line_total"]) > Decimal("0.005"):
             difference = values["quantity"] * values["unit_price"] - values["line_total"]
             message = (f"Line {i + 1}: Amount is {difference:.2f} below Quantity × Unit price; check a possible discount."
                        if difference > 0 else f"Line {i + 1}: Amount exceeds Quantity × Unit price. Check the values.")
@@ -229,7 +299,8 @@ def reconcile(data):
         difference = sum(amounts) - total
         return {"item_sum": str(sum(amounts)), "total": str(total),
                 "possible_discount": str(difference) if difference > Decimal("0.005") else "",
-                "can_allocate": difference > Decimal("0.005") and total >= 0 and all(
+                "can_allocate": not data.get("total_discount_percent") and not any(
+                    item.get("discount_percent") for item in data["items"]) and difference > Decimal("0.005") and total >= 0 and all(
                     amount >= 0 and decimal(item["quantity"]) > 0
                     for amount, item in zip(amounts, data["items"]))}
     except (ValueError, KeyError):

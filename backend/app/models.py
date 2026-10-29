@@ -18,6 +18,7 @@ class Item(StrictModel):
     quantity: str = Field(default="", max_length=32)
     unit: str = Field(default="", max_length=50)
     unit_price: str = Field(default="", max_length=32)
+    discount_percent: str = Field(default="", max_length=32)
     line_total: str = Field(default="", max_length=32)
     item_type: str = Field(default="Materials", min_length=1, max_length=100)
     photo_id: str = Field(default="", max_length=36)
@@ -40,6 +41,7 @@ class ReceiptData(StrictModel):
     tax: str = Field(default="", max_length=32)
     discount: str = Field(default="", max_length=32)
     total: str = Field(default="", max_length=32)
+    total_discount_percent: str = Field(default="", max_length=32)
     items: list[Item] = Field(default_factory=list, max_length=1000)
 
     @model_validator(mode="after")

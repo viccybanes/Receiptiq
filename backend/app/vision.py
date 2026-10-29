@@ -18,7 +18,7 @@ from pathlib import Path
 from pydantic import Field, ValidationError, field_validator
 from pydantic_core import from_json
 
-from .extraction import decimal, extraction_date, validate
+from .extraction import decimal, effective_discount, extraction_date, validate
 from .imaging import MAX_PAGES, inspect_file
 from .imaging import pages as image_pages
 from .layout import detail_bands, group_rows, layout_assistance_enabled, valid_box
@@ -570,6 +570,8 @@ def _remove_duplicate_tail(candidate):
 def _derive_from_amount(draft):
     derived = []
     for index, item in enumerate(draft["items"]):
+        if effective_discount(item, draft):
+            continue  # Existing manual percentages must not turn a net Amount into a gross price/quantity.
         if not item["line_total"] or bool(item["quantity"]) == bool(item["unit_price"]):
             continue
         key, known = ("quantity", "unit_price") if not item["quantity"] else ("unit_price", "quantity")

@@ -152,13 +152,18 @@ input[aria-invalid=true] { border-color: #ce9d88; background: #fffdfa; }
 input:focus, textarea:focus { border-color: var(--green); }
 textarea { min-height: 70px; resize: vertical; }
 .field-error { font-size: 11px; color: #9a3d2e; }
-.items-heading { display: flex; justify-content: space-between; align-items: center; margin: 28px 0 10px; padding-top: 18px; border-top: 1px solid var(--line); }
+.items-heading { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: center; margin: 28px 0 10px; padding-top: 18px; border-top: 1px solid var(--line); }
+.items-totals { display: flex; align-items: end; gap: 12px; margin-left: auto; }
+.items-totals label { display: flex; flex-direction: column; align-items: start; gap: 5px; font-size: 11px; }
+.total-discount-field { width: 130px; }
+.discount-help { color: var(--muted); font-size: 11px; margin-bottom: 12px; }
 .items-heading h3 { font-size: 13px; font-weight: 600; }
 .items-heading button { font-size: 11px; min-height: 28px; padding: 5px 7px; }
 .item-fields { position: relative; padding: 14px 12px; margin: 0 0 12px; border: 1px solid var(--line); border-radius: 7px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; min-width: 0; }
 .item-fields legend { color: var(--muted); font-size: 11px; padding: 0 6px; }
 .item-fields label { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
-.item-description { grid-column: 1/-1; }
+.item-description { grid-column: 1/5; }
+.item-discount small { color: var(--muted); font-size: 10px; }
 .item-fields input { min-height: 32px; padding: 6px 8px; }
 .item-fields.has-review-warning { border-color: #bd9851; background: #fffcf5; }
 .item-fields.has-review-error { border-color: #c67b6e; background: #fff6f3; }
@@ -235,6 +240,7 @@ th { background: var(--ground); position: sticky; top: 0; font-weight: 600; }
 @media (min-width: 1500px) { .workbench { grid-template-columns: 260px minmax(400px, 1.15fr) minmax(420px, 1fr); } }
 @media (max-width: 1150px) {
   .item-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .item-description { grid-column: 1/3; }
   main { padding: 24px 20px; }
   .app-header { padding: 0 20px; }
   .workbench { grid-template-columns: 200px minmax(240px, 1fr) minmax(300px, 1fr); }
@@ -270,6 +276,7 @@ th { background: var(--ground); position: sticky; top: 0; font-weight: 600; }
   .workspace-heading p { font-size: 12px; }
   .workspace-heading > button { width: 100%; }
   .item-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .item-description { grid-column: 1/-1; }
   .batch-bar { padding: 12px; gap: 7px; }
   .batch-bar select { max-width: calc(100% - 30px); padding-left: 2px; }
   .batch-count { display: none; }
