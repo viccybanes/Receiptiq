@@ -154,6 +154,8 @@ export default function ReceiptAssistance({ receipt, draft, pageId, crop, onSele
         <option value="google" disabled={!googleReady}>Gemini · {receipt.vision_settings?.google_model || 'Google AI Studio'}</option>
         {receipt.vision_settings?.google_model !== 'gemini-3.5-flash-lite' &&
           <option value="gemini-3.5-flash-lite" disabled={!googleReady}>Gemini 3.5 Flash-Lite · faster</option>}
+        {receipt.vision_settings?.google_model !== 'gemini-3.1-flash-lite' &&
+          <option value="gemini-3.1-flash-lite" disabled={!googleReady}>Gemini 3.1 Flash-Lite</option>}
       </select></label>
       {!googleReady && <p className="assistance-help">To use Gemini, enable Google with an API key and cloud consent in Workspace settings.</p>}
       <div className="assistance-actions">

@@ -139,7 +139,8 @@ def test_reentering_key_after_restore_requires_enabling_google_again(client, goo
     assert saved['provider'] == 'local' and saved['google_consent'] is False
 
 
-@pytest.mark.parametrize('provider, model', [('google', MODEL), ('google', 'gemini-3.5-flash-lite'), ('local', 'qwen3-vl:2b-instruct'),
+@pytest.mark.parametrize('provider, model', [('google', MODEL), ('google', 'gemini-3.5-flash-lite'),
+                                           ('google', 'gemini-3.1-flash-lite'), ('local', 'qwen3-vl:2b-instruct'),
                                            ('local', 'qwen3-vl:4b-instruct')])
 def test_manual_model_choice_routes_without_changing_upload_provider(client, google, monkeypatch, provider, model):
     receipt, _ = ready_receipt(client)

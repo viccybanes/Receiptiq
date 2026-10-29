@@ -100,6 +100,7 @@ try {
   assert.equal(await modelSelect.inputValue(), 'qwen3-vl:2b-instruct')
   assert.equal(await modelSelect.locator('option[value="google"]').evaluate(option => option.disabled), true)
   assert.equal(await modelSelect.locator('option[value="gemini-3.5-flash-lite"]').evaluate(option => option.disabled), true)
+  assert.equal(await modelSelect.locator('option[value="gemini-3.1-flash-lite"]').evaluate(option => option.disabled), true)
   await page.getByRole('checkbox', { name: 'Show AI line numbers', exact: true }).check()
   await page.locator('.vision-row-overlay').waitFor()
   assert.equal(await page.locator('.vision-row-overlay rect').count(), 2)
@@ -131,7 +132,7 @@ try {
   assert.equal(await modelSelect.inputValue(), 'google')
   assert.equal(await modelSelect.locator('option[value="google"]').evaluate(option => option.disabled), false)
   assert.match(await modelSelect.locator('option[value="google"]').textContent(), /Gemini.*gemini-3\.8-flash/)
-  for (const model of ['google', 'gemini-3.5-flash-lite', 'qwen3-vl:2b-instruct', 'qwen3-vl:4b-instruct']) {
+  for (const model of ['google', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'qwen3-vl:2b-instruct', 'qwen3-vl:4b-instruct']) {
     await modelSelect.selectOption(model)
     const response = page.waitForResponse(value => value.url().endsWith('/receipts/vision-sample/vision'))
     await page.getByRole('button', { name: 'Use vision', exact: true }).click()
@@ -144,7 +145,7 @@ try {
     assert.equal(settings.provider, 'google')
     assert.equal(settings.google_model, 'gemini-3.8-flash')
   }
-  await modelSelect.selectOption('gemini-3.5-flash-lite')
+  await modelSelect.selectOption('gemini-3.1-flash-lite')
   const modelFolder = new URL('../../artifacts/google-vision/', import.meta.url)
   await fs.mkdir(modelFolder, { recursive: true })
   for (const [name, width, height] of [['desktop', 1440, 1000], ['mobile', 390, 844]]) {
@@ -159,6 +160,7 @@ try {
   assert.equal(await page.getByLabel('Vision provider', { exact: true }).inputValue(), 'google')
   assert.equal(await page.getByLabel('Google API key', { exact: true }).inputValue(), '')
   assert.equal(await page.locator('#gemini-model-options option[value="gemini-3.5-flash-lite"]').count(), 1)
+  assert.equal(await page.locator('#gemini-model-options option[value="gemini-3.1-flash-lite"]').count(), 1)
   await page.getByLabel('Gemini model', { exact: true }).fill('gemini-3.5-flash-lite')
   await saveProvider.click()
   await page.getByText('Google enabled for new uploads and manual scans.').waitFor()
