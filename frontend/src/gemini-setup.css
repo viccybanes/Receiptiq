@@ -1,0 +1,39 @@
+.gemini-setup { width: min(650px, calc(100vw - 32px)); max-height: min(900px, 92dvh); margin: auto; padding: 0; overflow: hidden; color: var(--ink); background: var(--paper); border: 1px solid var(--line-strong); border-radius: 10px; box-shadow: 0 12px 80px #192e2555; }
+.gemini-setup[open] { display: flex; flex-direction: column; }
+.gemini-setup::backdrop { background: #122c2466; }
+.gemini-setup-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 24px 28px 18px; }
+.gemini-setup-heading h2 { font-size: 23px; font-weight: 600; letter-spacing: -.5px; line-height: 1.25; }
+.gemini-setup-heading h2:focus { outline: none; }
+.gemini-setup-progress { margin-bottom: 9px; font-size: 12px; font-weight: 600; color: var(--green-deep); }
+.gemini-setup-heading .icon-button { flex-shrink: 0; }
+.gemini-setup-body { min-height: 0; overflow-y: auto; padding: 0 28px 24px; font-size: 13px; }
+.gemini-setup-steps { padding-left: 24px; margin: 22px 0; }
+.gemini-setup-steps li { padding-left: 8px; margin-bottom: 18px; }
+.gemini-setup-steps li::marker { font-weight: 600; color: var(--green-deep); }
+.gemini-setup-steps strong { display: block; margin-bottom: 4px; font-weight: 600; }
+.gemini-setup-steps p { color: var(--muted); }
+.gemini-setup-steps svg { vertical-align: middle; }
+.gemini-setup-note { font-size: 12px; color: var(--muted); }
+.gemini-setup-note + .gemini-setup-note { margin-top: 8px; }
+.gemini-setup-key { display: grid; gap: 7px; margin: 20px 0 8px; font-weight: 600; }
+.gemini-setup-key input { width: 100%; min-width: 0; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--paper); font-weight: 400; }
+.gemini-setup-sample { margin-top: 20px; padding: 15px 16px; background: var(--wash); border: 1px solid var(--line); border-radius: 6px; }
+.gemini-setup-sample p { margin: 5px 0 12px; color: var(--muted); }
+.gemini-setup-result { margin: 14px 0 20px; color: var(--green-deep); }
+.gemini-setup-consent { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+.gemini-setup-consent input { flex-shrink: 0; width: 16px; height: 16px; margin: 3px 0 0; accent-color: var(--green); }
+.gemini-setup-complete { display: grid; gap: 14px; padding: 12px 0; }
+.gemini-setup-complete svg { color: var(--green); }
+.gemini-setup-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; padding: 16px 28px; border-top: 1px solid var(--line); background: var(--ground); }
+.gemini-setup-secondary { display: flex; gap: 4px; margin-right: auto; }
+.gemini-setup-footer > p { flex-basis: 100%; }
+@media (max-width: 560px) {
+  .gemini-setup { width: calc(100vw - 16px); max-height: 94dvh; }
+  .gemini-setup-heading { padding: 20px 18px 16px; }
+  .gemini-setup-heading h2 { font-size: 21px; }
+  .gemini-setup-body { padding: 0 18px 20px; }
+  .gemini-setup-footer { padding: 14px 18px; }
+  .gemini-setup-footer > .primary { width: 100%; }
+  .gemini-setup button { min-height: 40px; }
+  .gemini-setup-key input { font-size: 16px; }
+}

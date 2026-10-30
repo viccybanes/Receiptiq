@@ -58,6 +58,7 @@ await page.route('**/api/v1/**', async route => {
   const pathname = new URL(route.request().url()).pathname.replace('/api/v1', '')
   let body
   if (pathname === '/session') body = { token: 'synthetic-test' }
+  else if (pathname === '/vision/google-setup') body = { status: 'completed' }
   else if (pathname === '/health') body = { ocr_models_ready: true }
   else if (pathname === '/templates' || pathname === '/batches') body = []
   else if (pathname === '/receipts') body = [receipt]

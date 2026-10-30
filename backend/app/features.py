@@ -3,6 +3,7 @@
 import hashlib
 import json
 from pathlib import Path
+from threading import Lock
 
 import pypdfium2 as pdfium
 from fastapi import File, HTTPException, Request, UploadFile
@@ -14,6 +15,7 @@ from .backups import MAX_ARCHIVE, create_backup, list_backups, stage_restore
 from .db import now, uid
 from .extraction import receipt_issues, reconcile
 from .google_key import KEY_FILE, save_google_key
+from .google_setup import GoogleSetupInput, google_setup_status, save_google_setup, test_google_connection
 from .models import (
     LocationInput,
     ReviewOptions,
@@ -27,6 +29,7 @@ from .retrieval import Retrieval
 from .service import edit_receipt, require_mutable_receipt, require_receipt
 from .system import capabilities, setup_status, stage_location, start_setup
 from .templates import TemplateConflict, delete_template, get_template, save_template
+from .vision import VisionError
 from .vision_settings import (
     VisionSettings,
     public_vision_settings,
@@ -45,6 +48,8 @@ def view_receipt(store, receipt_id):
 
 
 def install_routes(app, store, worker):
+    google_test_lock = Lock()
+
     @app.get("/api/v1/vision/settings")
     def vision_settings():
         return public_vision_settings(store.root)
@@ -56,8 +61,7 @@ def install_routes(app, store, worker):
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 
-    @app.put("/api/v1/vision/google-key")
-    async def update_google_key(request: Request):
+    async def read_google_key(request, *, allow_saved=False):
         # Parse this write-only secret separately: validation responses must never echo its input.
         try:
             raw = bytearray()
@@ -66,17 +70,24 @@ def install_routes(app, store, worker):
                 if len(raw) > 4096:
                     raise ValueError()
             body = json.loads(raw)
+            if allow_saved and body == {}:
+                return None
             if not isinstance(body, dict) or set(body) != {"api_key"} or not isinstance(body["api_key"], str):
                 raise ValueError()
+            return body["api_key"]
         except (ValueError, UnicodeError):
             raise HTTPException(422, "Enter a Google AI Studio API key.") from None
+
+    @app.put("/api/v1/vision/google-key")
+    async def update_google_key(request: Request):
+        key = await read_google_key(request)
         try:
             # A restored backup can remember Google consent but deliberately has no key.
             # Re-entering a missing key must not resume restored cloud jobs by itself.
             if not (store.root / KEY_FILE).is_file():
                 save_vision_settings(store.root, VisionSettings(provider="local", google_consent=False))
             with FileLock(str(store.root / "settings.lock"), timeout=5):
-                save_google_key(store.root, body["api_key"])
+                save_google_key(store.root, key)
             return public_vision_settings(store.root)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from None
@@ -84,6 +95,29 @@ def install_routes(app, store, worker):
     @app.delete("/api/v1/vision/google-key")
     def delete_google_key():
         return save_vision_settings(store.root, VisionSettings(provider="local", google_consent=False), clear_key=True)
+
+    @app.post("/api/v1/vision/google-key/test")
+    async def test_google_key(request: Request):
+        key = await read_google_key(request, allow_saved=True)
+        if not google_test_lock.acquire(blocking=False):
+            raise HTTPException(409, "A Google connection test is already running. Wait for it to finish.")
+        try:
+            return await run_in_threadpool(test_google_connection, store.root, key)
+        except (ValueError, VisionError) as exc:
+            raise HTTPException(422, str(exc)) from None
+        finally:
+            google_test_lock.release()
+
+    @app.get("/api/v1/vision/google-setup")
+    def google_setup():
+        return google_setup_status(store.root)
+
+    @app.post("/api/v1/vision/google-setup")
+    def update_google_setup(body: GoogleSetupInput):
+        try:
+            return save_google_setup(store.root, body.status)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
 
     @app.get("/api/v1/system/capabilities")
     def hardware():

@@ -35,11 +35,16 @@ def _protect(data, *, decrypt=False):
         kernel32.LocalFree(output.data)
 
 
-def save_google_key(root, key):
+def validate_google_key(key):
     key = key.strip()
     # Authorization keys issued by AI Studio use an AQ. prefix.
     if not re.fullmatch(r"[A-Za-z0-9._-]{20,256}", key):
         raise ValueError("Enter a valid Google AI Studio API key.")
+    return key
+
+
+def save_google_key(root, key):
+    key = validate_google_key(key)
     encrypted = _protect(key.encode("utf-8"))
     temporary = root / (KEY_FILE + ".tmp")
     try:

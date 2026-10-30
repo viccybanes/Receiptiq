@@ -20,7 +20,7 @@ type SetupStatus = {
 }
 type Backup = { name: string; bytes: number; created_at: string }
 type Tab = 'models' | 'formats' | 'backups'
-type Props = { onClose: () => void; onTemplatesChanged: () => void }
+type Props = { onClose: () => void; onTemplatesChanged: () => void; onGeminiSetup: () => void }
 
 const PROFILES: { id: Profile; name: string; detail: string }[] = [
   { id: 'ocr-only', name: 'OCR only', detail: 'The smallest download. Read printed text, then enter or correct the expense details.' },
@@ -35,7 +35,7 @@ function size(bytes: number) {
   return bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`
 }
 
-export default function WorkspaceSettings({ onClose, onTemplatesChanged }: Props) {
+export default function WorkspaceSettings({ onClose, onTemplatesChanged, onGeminiSetup }: Props) {
   const dialog = useRef<HTMLDialogElement>(null)
   const [tab, setTab] = useState<Tab>('models')
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null)
@@ -231,6 +231,7 @@ export default function WorkspaceSettings({ onClose, onTemplatesChanged }: Props
         <fieldset className="settings-plain-fieldset settings-vision-provider" disabled={!visionSettings || visionSaving}>
           <legend>Receipt vision provider</legend>
           <p className="settings-muted">Choose how new uploads and manual scans are read. Every result still needs your verification.</p>
+          <button type="button" onClick={onGeminiSetup}>Gemini setup guide</button>
           <label className="settings-field"><span>Vision provider</span><select value={provider} aria-label="Vision provider"
             onChange={event => { setProvider(event.target.value as 'local' | 'google'); setProviderMessage('') }}>
             <option value="local">Local Qwen · offline</option><option value="google">Google AI Studio · your API key</option>

@@ -6,6 +6,7 @@ import { localDay, receiptDays } from './receiptDays'
 import Review from './Review'
 import type { Batch, Summary } from './types'
 import WorkspaceSettings from './WorkspaceSettings'
+import GeminiSetup from './GeminiSetup'
 import type { Template } from './TemplatesEditor'
 
 export const statusNames: Record<string, string> = {
@@ -26,6 +27,7 @@ export default function App() {
   const [assigneeFilter, setAssigneeFilter] = useState('')
   const [priority, setPriority] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [geminiSetupOpen, setGeminiSetupOpen] = useState(false)
   const [templates, setTemplates] = useState<Template[]>([])
   const [templateId, setTemplateId] = useState('default')
   const [error, setError] = useState('')
@@ -54,6 +56,14 @@ export default function App() {
   useEffect(() => {
     connect().then(() => setReady(true)).catch((e: Error) => setError(e.message))
   }, [])
+  useEffect(() => {
+    if (!ready) return
+    let alive = true
+    void api<{ status: string }>('/vision/google-setup').then(value => {
+      if (alive && value.status === 'pending') { setSettingsOpen(false); setGeminiSetupOpen(true) }
+    }).catch(() => { /* Settings keeps the guide available if the initial check fails. */ })
+    return () => { alive = false }
+  }, [ready])
   const refreshTemplates = useCallback(async () => {
     const rows = await api<Template[]>('/templates')
     setTemplates(rows)
@@ -387,6 +397,8 @@ export default function App() {
         <button className="primary" disabled={exporting} onClick={() => void exportCsv()}><ArrowDownToLine size={16} /> Download CSV</button></div>
     </dialog>}
     {settingsOpen && <WorkspaceSettings onClose={() => setSettingsOpen(false)}
+      onGeminiSetup={() => { setSettingsOpen(false); setGeminiSetupOpen(true) }}
       onTemplatesChanged={() => void refreshTemplates().catch((e: Error) => setError(e.message))} />}
+    {geminiSetupOpen && <GeminiSetup onClose={() => setGeminiSetupOpen(false)} />}
   </div>
 }

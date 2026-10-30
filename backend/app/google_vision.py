@@ -26,15 +26,22 @@ class GoogleVisionEngine(VisionEngine):
     provider = "google"
     source = "google_vision"
 
-    def __init__(self, root):
+    def __init__(self, root, *, setup_key=None):
         self.root = root
+        # Only the fixed synthetic setup test supplies an ephemeral key. Receipt jobs
+        # always load the saved key and recheck cloud consent throughout the request.
+        self._setup_key = setup_key
+
+    def _require_enabled(self):
+        if self._setup_key is None:
+            require_google_enabled(self.root)
 
     async def _request(self, model, body, stop):
         async def send():
             # Disable environment proxies and redirects so the key only goes to Google's fixed HTTPS host.
             async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=5, write=10),
                                          follow_redirects=False, trust_env=False) as client:
-                key = load_google_key(self.root)
+                key = self._setup_key if self._setup_key is not None else load_google_key(self.root)
                 async with client.stream("POST", f"{GOOGLE_HOST}/v1beta/models/{model}:generateContent",
                                          content=body, headers={"Content-Type": "application/json", "x-goog-api-key": key}) as response:
                     if response.status_code != 200:
@@ -58,10 +65,10 @@ class GoogleVisionEngine(VisionEngine):
 
         task = asyncio.create_task(send())
         try:
-            async with asyncio.timeout(180):
+            async with asyncio.timeout(45 if self._setup_key is not None else 180):
                 while True:
                     _cancelled(stop)
-                    require_google_enabled(self.root)
+                    self._require_enabled()
                     done, _ = await asyncio.wait({task}, timeout=0.2)
                     if done:
                         return task.result()
@@ -74,7 +81,7 @@ class GoogleVisionEngine(VisionEngine):
         if not re.fullmatch(r"gemini-[a-zA-Z0-9._-]{1,93}", model):
             raise VisionError("Choose a valid Gemini model ID in Settings.")
         _cancelled(stop)
-        require_google_enabled(self.root)
+        self._require_enabled()
         system, user = payload["messages"]
         schema = copy.deepcopy(payload["format"])
         # Google's schema compiler rejects the 1,000-row bound; local validation retains it.
@@ -100,7 +107,7 @@ class GoogleVisionEngine(VisionEngine):
             # Never propagate provider bodies or request objects containing the key to logs/API errors.
             raise VisionError("Cannot reach Google vision. Check your internet connection or select local Qwen.") from None
         _cancelled(stop)
-        require_google_enabled(self.root)
+        self._require_enabled()
         if len(raw) > MAX_RESPONSE_BYTES:
             raise VisionError("Google returned an oversized response. Try a smaller region.")
         try:

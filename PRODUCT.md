@@ -19,6 +19,8 @@ Users upload 20-100 images, review completed receipts while processing continues
 ## Capabilities and Constraints
 CPU OCR, image preprocessing, PDFs, durable batches, manual review and revision history form the base workflow. Vision uses local Qwen or explicitly enabled Google AI Studio with a user-provided key. New uploads apply vision only while unchanged and unverified; manual scans remain suggestions. Google-enabled uploads try Gemini 3.5 Flash-Lite, 3.1 Flash-Lite, 3.8 Flash, then local Qwen 2B on failure, stopping at the first success. Retrieval uses only current verified records with explicit opt-in, stays local, and never supplies historical prices as facts. Workplace CSV formats, photo bundles, local review assignment, PDF page grouping, backups/restore and Windows packaging extend that workflow. Google sends current receipt images/OCR to the cloud and uses the user's quota/billing. The 0.4.0 installer is an unsigned preview; clean-machine and real handwritten-corpus validation remain release gates.
 
+First-run setup welcomes users to Receiptor, explains how to create a Google AI Studio key, and tests it against a built-in sample image. The test does not use or change saved receipts. A successful test and explicit cloud consent precede saving/enabling Gemini through this guide. Users can skip, retain their current provider, and reopen the guide from Settings. Completed or skipped setup is remembered per workspace.
+
 ## Brand Commitments
 Name: Receiptor. The wordmark uses dark ink for "Receip" and the existing evergreen accent for "tor". Independent application from the adjacent Frutiger Aero website.
 
